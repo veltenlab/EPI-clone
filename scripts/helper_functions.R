@@ -65,7 +65,8 @@ run_marker_enrichment <- function(markers, panel, fc.cut=1.0){
   return(list(Positive=list(HOMER=pos_homer, TFBS=na.omit(pos_tfbs), Meth_enhancers=meth_enhancers),
               Negative=list(HOMER=neg_homer, TFBS=na.omit(neg_tfbs), Demeth_enhancers=demeth_enhancers)))
 }
-tfbs_columns <- c(26:73, 79:96)
+#tfbs_columns <- c(26:73, 79:96)
+tfbs_columns <- c(19:66, 69:86)
 
 enrich_tfbs <- function(tfbs_count, panel, num){
   if(nrow(tfbs_count)<1){

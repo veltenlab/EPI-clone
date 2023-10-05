@@ -146,7 +146,8 @@ ggplot(to_plot, aes(x = Modality, y = Information, fill = Type)) + geom_col(posi
 To annotate the different clusters we identified, we leverage information from bulk data. Using this information, we can compute a relative methylation score for a subset of amplicons in each of the cells.
 
 ```{r bulk_methylation, fig.width=4,fig.height=4}
-panel_file <- 'infos/panel_info_dropout_pwm.tsv'
+#panel_file <- 'infos/panel_info_dropout_pwm.tsv'
+panel_file <- '/home/mscherer/cluster/project/Methylome/paper/HematoMethylome/github/EPI-clone/infos/panel_info_dropout_pwm.tsv'
 counts <- as.matrix(GetAssayData(seurat_obj,
                        'DNAm',
                        slot='counts'))
@@ -499,11 +500,11 @@ rowinfo$SimpleCellType <- c("pre/pro-B"="pre/pro-B",
                        "EryP"="EryP",
                        "GMP"="GMP",
                        "MPP4"="GMP",
-                       "MPP3"="MPP3" ,
+                       "MPP3"="HSC/MPP1" ,
                        "HSC/MPP1"="HSC/MPP1",
                        "MkP 1"="MkP",
                        "MkP 2"="MkP",
-                       "MPP2"="MPP2")[as.character(rowinfo$CellType)]
+                       "MPP2"="HSC/MPP1")[as.character(rowinfo$CellType)]
 frequencies <- as.data.frame(matrix(NA, nrow = length(clone_counts$x), ncol = length(unique(rowinfo$SimpleCellType))))
 row.names(frequencies) <- clone_counts$x
 colnames(frequencies) <- unique(rowinfo$SimpleCellType)
@@ -512,19 +513,21 @@ for(x in clone_counts$x){
   frequencies[x, counts$x] <- counts$freq
 }
 frequencies[is.na(frequencies)] <- 0
-frequencies <- apply(frequencies, 1, function(x)x/mean(x))
-clust <- cutree(hclust(dist(t(log2(frequencies+1)), 'euclidean'), method='ward.D2'), 3)
-clust_annotation <- c('1'='Myeloid Biased',
-                      '2'='Balanced',
-                      '3'='Balanced')
+frequencies <- apply(frequencies, 2, function(x)x/sum(x))
+frequencies <- frequencies/rowSums(frequencies)
+clust <- cutree(hclust(dist(frequencies, 'euclidean'), method='ward.D2'), 3)
+clust_annotation <- c('2'='Myeloid Biased',
+                      '1'='Balanced',
+                      '3'='MegK Biased')
 row_anno_fr <- data.frame(Annotation=clust_annotation[as.character(clust)])
 row_anno <- HeatmapAnnotation(df=row_anno_fr,
                               show_legend = FALSE,
                               which='row',
                               col = list(Annotation=c('Balanced'='gray50',
-                                                      'Myeloid Biased'="#C3C380")),
+                                                      'Myeloid Biased'="#C3C380",
+                                                      "MegK Biased"="#BDA8CB")),
                               show_annotation_name = FALSE)
-ComplexHeatmap::Heatmap(t(log2(frequencies[intersect(names(color_map), row.names(frequencies)), ]+1)),
+ComplexHeatmap::Heatmap(frequencies[, intersect(names(color_map), colnames(frequencies))],
                         show_row_names = FALSE,
                         col = viridis(50),
                         cluster_rows = TRUE,
@@ -533,4 +536,19 @@ ComplexHeatmap::Heatmap(t(log2(frequencies[intersect(names(color_map), row.names
                         clustering_method_rows = 'ward.D2',
                         show_heatmap_legend =FALSE,
                         right_annotation = row_anno)
+
+```
+
+## Plot bias a UMAP
+
+```{r bias_umap}
+seurat_clone <- CreateSeuratObject(t(frequencies))
+seurat_clone <- FindNeighbors(seurat_clone,
+                              features=rownames(seurat_clone),
+                              dims=NULL,
+                              assay='RNA')
+u.map <- umap(frequencies)
+to_plot <- data.frame(UMAP1=u.map[,1], UMAP2=u.map[,2], frequencies)
+to_plot <- reshape2::melt(to_plot, id=c('UMAP1', 'UMAP2'))
+ggplot(to_plot, aes(x=UMAP1, y=UMAP2, color=value))+geom_point()+plot_theme+scale_color_viridis(option = 'inferno', begin = 1, end=0)+NoGrid()+NoAxes()+facet_wrap(variable~., ncol=2)
 ```
