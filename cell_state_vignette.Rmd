@@ -16,6 +16,7 @@ library(infotheo)
 library(caret)
 library(randomForest)
 library(ComplexHeatmap)
+library(uwot)
 knitr::opts_chunk$set(echo = TRUE)
 plot_theme_legend <- theme(panel.background = element_rect(color='black',fill='white'),
                           panel.grid=element_blank(),
@@ -81,7 +82,7 @@ DimPlot(seurat_obj, group.by = "CellType",reduction="umap") + ggtitle("") + NoAx
 ## Transcriptomic uMAP
 
 ```{r transcriptomic_umap, warning=F, message=F}
-seurat_rna <- readRDS("/home/mscherer/cluster/project/Methylome/analysis/HSCs/GeX/LARRY/objects/seurat_LK_LSK.RDS") #replace by download from figshare
+seurat_rna <- readRDS(url("https://figshare.com/ndownloader/files/42587815"))
 DimPlot(seurat_rna, group.by = "CellType") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = color_map)
 ```
 
@@ -115,26 +116,9 @@ unex_rna <- entropy(seurat_rna$CellType)
 ex_rna <- mutinformation(seurat_rna$CellType,
                          rf_rna$predicted)
 
-arch_obj <- loadArchRProject(path = "/home/mscherer/cluster/project/Methylome/ATAC_Landau/LARRY_reference/",
-                             force = FALSE)
-atac_mat <- getMatrixFromProject(
-  ArchRProj = arch_obj,
-  useMatrix = "TileMatrix",
-  binarize = TRUE)
-atac_mat <- atac_mat[arch_obj@reducedDims$IterativeLSI$LSIFeatures$idx, ]
-vars <- apply(as.matrix(atac_mat@assays@data$TileMatrix), 1, var)
-atac_mat <- atac_mat[order(vars, decreasing = TRUE)[1:2000], ]
-pred_dat_atac <- data.frame(CellType=as.factor(arch_obj@cellColData$predictedGroup_Un),
-                            t(as.matrix(atac_mat@assays@data$TileMatrix)))
-rf_atac <- randomForest(CellType~., 
-                       data=pred_dat_atac)
-unex_atac <- entropy(pred_dat_atac$CellType)
-ex_atac <- mutinformation(pred_dat_atac$CellType,
-                          rf_atac$predicted)
-
-to_plot <- data.frame(Modality = rep(c("RNA","DNAm", "ATAC"), each =2),
+to_plot <- data.frame(Modality = rep(c("RNA","DNAm"), each =2),
                   Type = rep(c("Unexplained", "Full"), 3),
-                  Information = natstobits(c(unex_rna, ex_rna, unex_dnam, ex_dnam, unex_atac, ex_atac)))
+                  Information = natstobits(c(unex_rna, ex_rna, unex_dnam, ex_dnam)))
 
 ggplot(to_plot, aes(x = Modality, y = Information, fill = Type)) + geom_col(position = position_identity()) +
   scale_fill_manual(values = c("Unexplained" = "darkgrey","Full" = "darkred"), name = "") +
@@ -146,8 +130,7 @@ ggplot(to_plot, aes(x = Modality, y = Information, fill = Type)) + geom_col(posi
 To annotate the different clusters we identified, we leverage information from bulk data. Using this information, we can compute a relative methylation score for a subset of amplicons in each of the cells.
 
 ```{r bulk_methylation, fig.width=4,fig.height=4}
-#panel_file <- 'infos/panel_info_dropout_pwm.tsv'
-panel_file <- '/home/mscherer/cluster/project/Methylome/paper/HematoMethylome/github/EPI-clone/infos/panel_info_dropout_pwm.tsv'
+panel_file <- 'infos/panel_info_dropout_pwm.tsv'
 counts <- as.matrix(GetAssayData(seurat_obj,
                        'DNAm',
                        slot='counts'))
@@ -516,8 +499,8 @@ frequencies[is.na(frequencies)] <- 0
 frequencies <- apply(frequencies, 2, function(x)x/sum(x))
 frequencies <- frequencies/rowSums(frequencies)
 clust <- cutree(hclust(dist(frequencies, 'euclidean'), method='ward.D2'), 3)
-clust_annotation <- c('2'='Myeloid Biased',
-                      '1'='Balanced',
+clust_annotation <- c('1'='Myeloid Biased',
+                      '2'='Balanced',
                       '3'='MegK Biased')
 row_anno_fr <- data.frame(Annotation=clust_annotation[as.character(clust)])
 row_anno <- HeatmapAnnotation(df=row_anno_fr,
