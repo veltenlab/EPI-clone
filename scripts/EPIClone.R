@@ -16,7 +16,8 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
                   methylation.assay.name = "DNAm", protein.assay.name = "AB",
                   lower.thr.methrate = 0.25, upper.thr.methrate = 0.9, thr.protein.ass = NULL,selected.CpGs = NULL,
                   ncells.bigClone = 5, npcs.bigCloneSelection = 100, k.bigCloneSelection = 5, thr.bigCloneSelection =1, smoothen.bigCloneSelection = NULL,
-                  npcs.Clustering = 100, k.Clustering = 25, res.Clustering=5, returnIntermediateSeurat = F) {
+                  npcs.Clustering = 100, k.Clustering = 25, res.Clustering=5, returnIntermediateSeurat = F,
+                  performance.field='PerformanceNonHhaI') {
   suppressMessages({
     
     if (!is.null(trueClone)) seurat_obj@meta.data[,trueClone] <- as.character(seurat_obj@meta.data[,trueClone])
@@ -119,10 +120,12 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     seurat_obj <- FindNeighbors(seurat_obj, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = k.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" )
     seurat_obj$avgNNdist <- apply(seurat_obj@neighbors$clone.neighbors@nn.dist,1,function(x) mean(x[x>0]))
     
-    to.summarise <- seurat_obj@meta.data[, c(batch ,celltype,"avgNNdist",sprintf("nFeature_%s", methylation.assay.name))]
+    to.summarise <- seurat_obj@meta.data[, c(batch ,celltype,"avgNNdist",sprintf("nFeature_%s", methylation.assay.name), performance.field)]
     colnames(to.summarise)[1] <- "Sample"
     colnames(to.summarise)[2] <- "celltype"
     colnames(to.summarise)[4] <- "nFeature"
+    colnames(to.summarise)[5] <- "performance"
+    #m <- lm(avgNNdist ~ nFeature + celltype + performance, data = to.summarise) else m <- lm(avgNNdist ~ nFeature + Sample + celltype + performance, data = to.summarise)
     if (length(unique(to.summarise$Sample)) == 1) m <- lm(avgNNdist ~ nFeature + celltype, data = to.summarise) else m <- lm(avgNNdist ~ nFeature + Sample + celltype, data = to.summarise)
     seurat_obj$avgNNres <- residuals(m)
     
@@ -193,11 +196,13 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
             cat(k,ksmooth,"\n")
             fortuning <- FindNeighbors(fortuning, reduction = "clonePCA", dims = 1:npcs, k.param = k, return.neighbor=T, graph.name = "clone.neighbors" )
             fortuning$avgNNdist <- apply(fortuning@neighbors$clone.neighbors@nn.dist,1,function(x) mean(x[x>0], na.rm=T))
-            to.summarise <- fortuning@meta.data[, c(trueClone,batch,celltype,"avgNNdist",sprintf("nFeature_%s", methylation.assay.name))]
+            to.summarise <- fortuning@meta.data[, c(trueClone,batch,celltype,"avgNNdist",sprintf("nFeature_%s", methylation.assay.name), performance.field)]
             
             colnames(to.summarise)[2] <- "Sample"
             colnames(to.summarise)[3] <- "celltype"
             colnames(to.summarise)[5] <- "nFeature"
+            colnames(to.summarise)[6] <- 'performance'
+            #m <- lm(avgNNdist ~ nFeature + celltype + performance, data = to.summarise) else m <- lm(avgNNdist ~ nFeature + Sample + celltype + performance, data = to.summarise)
             if (length(unique(to.summarise$Sample)) == 1) m <- lm(avgNNdist ~ nFeature + celltype, data = to.summarise) else m <- lm(avgNNdist ~ nFeature + Sample + celltype, data = to.summarise)
             fortuning$avgNNres <- residuals(m)
             
@@ -274,7 +279,9 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     ### 7. nicer visualizations ####
     if (!is.null(trueClone) & !is.null(plotFolder)) {
       cloneSizes <- table(for_clustering@meta.data[,trueClone])
-      for_clustering$CloneForRiver <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]] <= 10, "small clone", for_clustering@meta.data[,trueClone]))
+      clone_for_river <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]] <= 10, "small clone", for_clustering@meta.data[,trueClone]))
+      names(clone_for_river) <- Cells(for_clustering)
+      for_clustering$CloneForRiver <- clone_for_river
       
       forriver <- data.frame(LARRY = factor(for_clustering$CloneForRiver), unsuper = Idents(for_clustering))
       forriver <- acast(LARRY ~unsuper, data= forriver,fun.aggregate = length)

@@ -1,3 +1,15 @@
+plot_theme <- theme(panel.background = element_rect(color='black',fill='white'),
+                    panel.grid=element_blank(),
+                    text=element_text(color='black',size=12),
+                    axis.text=element_text(color='black',size=10),
+                    axis.ticks=element_line(color='black', size=.1),
+                    strip.background = element_blank(),
+                    legend.key=element_rect(color='black', fill=NA),
+                    legend.key.size = unit(5, 'mm'),
+                    plot.title=element_blank(),
+                    legend.position = 'none',
+                    strip.text = element_text(color='black',size=12))
+
 plot_tfbs_methylation <- function(seurat_rna,
                                   counts,
                                   tfbs,
@@ -35,8 +47,11 @@ plot_type_methylation <- function(seurat_rna,
   
   return(plot)
 }
-run_marker_enrichment <- function(markers, panel, fc.cut=1.0){
-  pos.markers <- markers[markers$avg_log2FC>fc.cut&markers$p_val_adj<0.05, ]
+run_marker_enrichment <- function(markers,
+                                  panel,
+                                  fc.cut=1.0,
+                                  pval_cut=0.05){
+  pos.markers <- markers[markers$avg_log2FC>fc.cut&markers$p_val_adj<pval_cut, , drop=FALSE]
   if(nrow(pos.markers)<1){
     pos_homer <- NA
     pos_tfbs <- NA
@@ -49,7 +64,7 @@ run_marker_enrichment <- function(markers, panel, fc.cut=1.0){
     pos_tfbs[which(pos_tfbs$freq<=3), 'enrichment'] <- 1
     meth_enhancers <- pos.markers$enhancer_annotation_gene_name[!is.na(pos.markers$enhancer_annotation_gene_name)]
   }
-  neg.markers <- markers[markers$avg_log2FC<(-fc.cut)&markers$p_val_adj<0.05, ]
+  neg.markers <- markers[markers$avg_log2FC<(-fc.cut)&markers$p_val_adj<pval_cut, , drop=FALSE]
   if(nrow(neg.markers)<1){
     neg_homer <- NA
     neg_tfbs <- NA
@@ -92,8 +107,11 @@ enrich_tfbs <- function(tfbs_count, panel, num){
 differential_test <- function(seurat_rna,
                               ident.1,
                               ident.2=NULL,
-                              logfc.threshold=0.1){
-  counts <- t(as.matrix(GetAssayData(seurat_rna, assay = 'DNAm', slot='counts')))
+                              logfc.threshold=0.1, 
+                              assay='DNAm',
+                              test.use=wilcox.test,
+                              slot='counts'){
+  counts <- t(as.matrix(GetAssayData(seurat_rna, assay = assay, slot=slot)))
   selected_cells <- Idents(seurat_rna)%in%ident.1
   if(is.null(ident.2)){
     other_cells <- !selected_cells
@@ -101,8 +119,13 @@ differential_test <- function(seurat_rna,
     other_cells <- Idents(seurat_rna)%in%ident.2
   }
   res <- sapply(colnames(counts), function(amplicon){
-    p_val <- wilcox.test(counts[selected_cells, amplicon], counts[other_cells, amplicon])$p.value
-    log2_fc <- log2(mean(counts[selected_cells, amplicon])/mean(counts[other_cells, amplicon]))
+    dat1 <- counts[selected_cells, amplicon]
+    dat2 <- counts[other_cells, amplicon]
+    if(length(dat1)<3|length(dat2)<3|(length(dat1)-sum(is.na(dat1))<3)|(length(dat2)-sum(is.na(dat2))<3)){
+      return(c(NA, NA))
+    }
+    p_val <- test.use(na.omit(dat1), na.omit(dat2))$p.value
+    log2_fc <- log2(mean(dat1, na.rm=T)/mean(dat2, na.rm=T))
     return(c(p_val, log2_fc))
   })
   res <- as.data.frame(t(res))
