@@ -61,7 +61,7 @@ require(fossil)
 require(reshape2)
 require(pheatmap)
 require(GenomicRanges)
-full_seurat <- readRDS(url(''))
+full_seurat <- readRDS(url(""))
 larry <- subset(full_seurat, Experiment == "LARRY main experiment")
 ```
 
@@ -102,7 +102,7 @@ The first step is to find the nearest neighbors and compute the distance:
 ```{r epiclone_p2a, warning=FALSE,message=FALSE}
 npcs.bigCloneSelection <- 100
 k.bigCloneSelection <- 5
-thr.bigCloneSelection <- -0.3
+thr.bigCloneSelection <- 0
 
 larry <- ScaleData(larry, assay = "DNAm", features = selected_not_protein, verbose = F)
 larry <- RunPCA(larry, assay = "DNAm", features = selected_not_protein, reduction.name = "clonePCA", reduction.key = "CLONEPC_", npcs = 100, verbose = F)
@@ -302,6 +302,18 @@ full_seurat <- RunUMAP(full_seurat, reduction = "pca", dims = 1:50, verbose = F)
 
 
 ```{r setupcolors_mature, echo = F}
+celltypeColors <- c("HSC/MPP1"="maroon4",
+                    "MPP2" ="darkgrey",
+                    "MPP3/4" = "darkblue",
+                    "MEP" = "#ED7950",
+                    "MkP" = "#BDA8CB",
+                    "GMP" = "#C3C380",
+                    "monocytes" = "darkgreen",
+                    'mature myeloid'='#e5e500',
+                    'DCs'='#bfff40',
+                    'macrophages'='darkgreen',
+                    'Eo/Baso'='#bfbf30',
+                    "pre/pro-B" ="#94B1F9")
 cloneorder <- table(full_seurat$LARRY)
 bigclones <- names(cloneorder)[cloneorder > 30]
 cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
@@ -538,7 +550,6 @@ We can now plot the clustering result and the ground truth clonal labels side by
 ```{r clusterresult_mature, echo=F, fig.width=4,fig.height=4.2}
 
 DimPlot(for_clustering, reduction="cloneUMAP", label =T)  + NoLegend() + ggtitle("Clustering") +NoAxes()
-DimPlot(for_clustering, reduction="cloneUMAP", group.by = "HasLARRY")
 p1 <- DimPlot(for_clustering, reduction="cloneUMAP", group.by = "LARRY")  + NoLegend() + ggtitle(" ") + NoAxes()
 p2 <- DimPlot(for_clustering, reduction="cloneUMAP", group.by = "CellType") + scale_color_manual(values=celltypeColors) + ggtitle(" ") + NoAxes() + NoLegend()
 p3 <- DimPlot(for_clustering, reduction="cloneUMAP", group.by = "Origin") + ggtitle("") + NoAxes() + scale_color_manual(values=c('LSK'= '#ff678c', 'LK'='#6e1e8c', 'mature lung'='#008c64', 'mature BM/PB'='#bfbf30'))+NoLegend()
@@ -631,14 +642,5 @@ grid.arrange(plot_ct, plot_total, nrow=2)
 ```
 
 
-```{r larry_barcodes_mature}
-to_plot <- sapply(strsplit(full_seurat$other_clones, ';'), function(x){
-  length(x)+1
-})
-to_plot[is.na(full_seurat$LARRY)] <- NA
-to_plot <- data.frame(LARRYCounts=to_plot, CellType=full_seurat$CellType)
-ggplot(to_plot, aes(x=CellType, y=LARRYCounts, fill=CellType))+geom_boxplot()+plot_theme+
-  scale_fill_manual(values=celltypeColors)+theme(axis.text.x=element_text(angle=45, hjust=1))
-```
 
 

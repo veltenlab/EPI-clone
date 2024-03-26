@@ -60,7 +60,7 @@ require(fossil)
 require(reshape2)
 require(pheatmap)
 require(GenomicRanges)
-full_seurat <- readRDS(url(""))
+full_seurat <- readRDS(url(''))
 larry <- subset(full_seurat, Experiment == "LARRY main experiment")
 ```
 

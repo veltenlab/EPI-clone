@@ -64,11 +64,9 @@ panel <- read.table('../infos/panel_info_dropout_pwm.tsv',
                     sep='\t')
 ```
 
-This vignette introduces the EPI-Clone algorithm in detail. The convenient wrapper function  `epiclone` is described in the main readme of the github repo.
 
-## Unsupervised uMAP (Figure 1b,c)
+## Unsupervised uMAP
 
-First we load the data and perform an unsupervised dimensionality reduction of all CpGs.
 
 ```{r readData, warning=F, message=F}
 require(Seurat)
