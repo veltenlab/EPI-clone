@@ -61,7 +61,7 @@ require(fossil)
 require(reshape2)
 require(pheatmap)
 require(GenomicRanges)
-full_seurat <- readRDS(url(""))
+full_seurat <- readRDS(url('https://figshare.com/ndownloader/files/42479346'))
 larry <- subset(full_seurat, Experiment == "LARRY main experiment")
 ```
 
@@ -286,7 +286,7 @@ ggplot(aes(fill = clone,x=1),data=summary) + geom_bar() + coord_polar(theta = "y
 First we load the data and perform an unsupervised dimensionality reduction of all CpGs.
 
 ```{r readData_mature, warning=F, message=F}
-full_seurat <- readRDS(url(""))
+full_seurat <- readRDS(url("https://figshare.com/ndownloader/files/45262066"))
 ```
 
 We perform straightforward Seurat dimensionality reduction
@@ -445,6 +445,8 @@ full_seurat$avgNNdist <- apply(full_seurat@neighbors$clone.neighbors@nn.dist,1,f
 This distance estimate seems to be impacted by technical covariates, which we regress out:
 
 ```{r epiclone_p2b_mature}
+performance <- read.csv("../infos/performance_mature.csv", row.names = 1)
+full_seurat <- AddMetaData(full_seurat, performance)
 to.summarise <- full_seurat@meta.data[, c("Sample" ,"CellType","avgNNdist","nFeature_DNAm", "PerformanceNonHhaI")]
 m <- lm(avgNNdist ~ nFeature_DNAm + Sample + CellType + PerformanceNonHhaI, data = to.summarise)
 full_seurat$avgNNres <- residuals(m)

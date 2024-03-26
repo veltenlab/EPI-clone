@@ -1,5 +1,5 @@
 ---
-  title: "EPI-Clone Figure 5"
+title: "EPI-Clone Figure 5"
 author: "Michael Scherer & Lars Velten"
 date: "13/03/2023"
 output: html_document
@@ -78,7 +78,7 @@ require(pheatmap)
 require(GenomicRanges)
 require(ComplexHeatmap)
 require(viridis)
-full_seurat <- readRDS(url(''))
+full_seurat <- readRDS(url('https://figshare.com/ndownloader/files/45262060'))
 cpgs <- read.csv('../infos/cpg_selection.csv', row.names = 1)
 dynamic_cpgs <- row.names(subset(cpgs, subset=Type=='Dynamic'))
 static_cpgs <- row.names(subset(cpgs, subset=Type=='Static'))
@@ -237,30 +237,19 @@ clone_methylation_mat <- sapply(na.omit(unique(Idents(epi_old_seurat))), functio
   cells_on_clones <- clonal_cpgs_mat[, which(Idents(epi_old_seurat)==x), drop=FALSE]
   round(rowMeans(cells_on_clones))
 })
-epimutations <- apply(clone_methylation_mat, 2, function(x){
-  sum(x[row.names(subset(info[static_cpgs, ,drop=FALSE], subset=Type=='Methylated'))]==0)
-})
+
 total_counts_mat <- sapply(na.omit(unique(Idents(epi_old_seurat))), function(x){
   cells_on_clones <- epi_old_seurat[[]][which(Idents(epi_old_seurat)==x), 'TotalCounts']
   mean(cells_on_clones)
 })
-epimutations <- data.frame(Epimutations=epimutations, TotalCounts=total_counts_mat, row.names = paste0('Clone', unique(Idents(epi_old_seurat))))
-epimutations$Residuals <- lm(Epimutations~TotalCounts, data=epimutations)$residuals
 
 rowinfo$SimpleCellType <- simpleCTmap[as.character(rowinfo$CellType)]
 frequencies <- as.data.frame(matrix(NA, nrow = length(clone_counts$x), ncol = length(na.omit(unique(rowinfo$SimpleCellType)))))
 row.names(frequencies) <- clone_counts$x
 colnames(frequencies) <- na.omit(unique(rowinfo$SimpleCellType))
-# sub-sample to the same number of cells per cluster
 rowinfo_young <- epi_young_seurat[[]]
 ct_counts_young <- table(rowinfo_young$CellType)
 ct_counts_old <- table(rowinfo$CellType)
-# set.seed(314)
-# rowinfo_sub <- do.call('rbind', lapply(unique(names(ct_counts_old)), function(ct){
-#   rowinfo_sel <- rowinfo[rowinfo$CellType==ct, ]
-#   return(rowinfo_sel[sample(1:nrow(rowinfo_sel), min(ct_counts_old[ct], ct_counts_young[ct])), ])
-# }))
-# rowinfo_sub <- rowinfo_sub[!is.na(rowinfo_sub$SimpleCellType), ]
 rowinfo <- rowinfo[!is.na(rowinfo$SimpleCellType), ]
 for(x in clone_counts$x){
   counts <- plyr::count(rowinfo[rowinfo$Clone%in%x, 'SimpleCellType'])
@@ -320,15 +309,10 @@ clone_methylation_mat <- sapply(na.omit(unique(Idents(epi_young_seurat))), funct
   cells_on_clones <- clonal_cpgs_mat[, which(Idents(epi_young_seurat)==x), drop=FALSE]
   round(rowMeans(cells_on_clones))
 })
-epimutations <- apply(clone_methylation_mat, 2, function(x){
-  sum(x[row.names(subset(info[static_cpgs, ,drop=FALSE], subset=Type=='Methylated'))]==0)
-})
 total_counts_mat <- sapply(na.omit(unique(Idents(epi_young_seurat))), function(x){
   cells_on_clones <- epi_young_seurat[[]][which(Idents(epi_young_seurat)==x), 'TotalCounts']
   mean(cells_on_clones)
 })
-epimutations <- data.frame(Epimutations=epimutations, TotalCounts=total_counts_mat, row.names = paste0('Clone', unique(Idents(epi_young_seurat))))
-epimutations$Residuals <- lm(Epimutations~TotalCounts, data=epimutations)$residuals
 
 rowinfo$SimpleCellType <- simpleCTmap[as.character(rowinfo$CellType)]
 frequencies <- as.data.frame(matrix(NA, nrow = length(clone_counts$x), ncol = length(na.omit(unique(rowinfo$SimpleCellType)))))
@@ -337,26 +321,23 @@ colnames(frequencies) <- na.omit(unique(rowinfo$SimpleCellType))
 rowinfo_old <- epi_old_seurat[[]]
 ct_counts_young <- table(rowinfo$CellType)
 ct_counts_old <- table(rowinfo_old$CellType)
-# set.seed(314)
-# rowinfo_sub <- do.call('rbind', lapply(unique(names(ct_counts_old)), function(ct){
-#   rowinfo_sel <- rowinfo[rowinfo$CellType==ct, ]
-#   return(rowinfo_sel[sample(1:nrow(rowinfo_sel), min(ct_counts_old[ct], ct_counts_young[ct])), ])
-# }))
-# rowinfo_sub <- rowinfo_sub[!is.na(rowinfo_sub$SimpleCellType), ]
+
 rowinfo <- rowinfo[!is.na(rowinfo$SimpleCellType), ]
 for(x in clone_counts$x){
-  counts <- plyr::count(rowinfo[rowinfo_sub$Clone%in%x, 'SimpleCellType'])
+  counts <- plyr::count(rowinfo[rowinfo$Clone%in%x, 'SimpleCellType'])
   frequencies[x, counts$x] <- counts$freq
 }
 clone_sizes <- rowSums(frequencies, na.rm = TRUE)
 frequencies[is.na(frequencies)] <- 0
 frequencies <- apply(frequencies, 2, function(x)x/sum(x))
 frequencies <- frequencies/rowSums(frequencies)
-clust <- cutree(hclust(dist(frequencies, 'euclidean'), method='ward.D2'), 4)
+clust <- cutree(hclust(dist(frequencies, 'euclidean'), method='ward.D2'), 6)
 clust_annotation <- c('1'='Balanced',
                       '2'='Balanced',
-                      '3'='Myeloid Biased',
-                      '4'='Lymphoid Biased')
+                      '3'='Balanced',
+                      '4'='Lymphoid Biased',
+                      '5'='Myeloid Biased',
+                      '6'='Lymphoid Biased')
 row_anno_fr <- data.frame(Annotation=clust_annotation[as.character(clust)], row.names = clone_counts$x)
 row_anno <- HeatmapAnnotation(df=row_anno_fr,
                               show_legend = FALSE,

@@ -75,7 +75,7 @@ This vignette shows some applications of EPI-clone in combination with the DNA m
 We simply load the data and visualize the integrated uMAP that shows three differentiation trajectories.
 
 ```{r differentiation_umap, warning=F, message=F}
-seurat_obj <- readRDS(url(''))
+seurat_obj <- readRDS(url('https://figshare.com/ndownloader/files/42479346'))
 DimPlot(seurat_obj, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = color_map)
 ```
 
