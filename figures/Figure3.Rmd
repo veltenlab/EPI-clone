@@ -171,7 +171,7 @@ If LARRY information is available, we can compute ROC curves
 
 ```{r roc, fig.width=4, fig.height=4}
 trueClone <- "LARRY"
-ncells.bigClone <- 20
+ncells.bigClone <- 30
 true_clone <- larry@meta.data[,trueClone]
 larry$true_big_clone <-  larry$csize > ncells.bigClone
 forAUC <-data.frame( true_small_clones = larry$csize <= ncells.bigClone, 
