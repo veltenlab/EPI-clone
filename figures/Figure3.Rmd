@@ -115,7 +115,7 @@ This distance estimate seems to be impacted by technical covariates, which we re
 
 ```{r epiclone_p2b}
 to.summarise <- larry@meta.data[, c("ProcessingBatch" ,"CellType","avgNNdist","nFeature_DNAm", "PerformanceNonHhaI")]
-m <- lm(avgNNdist ~ nFeature_DNAm + ProcessingBatch + CellType + PerformanceNonHhaI, data = to.summarise)
+m <- lm(avgNNdist ~ nFeature_DNAm + ProcessingBatch + CellType, data = to.summarise)
 larry$avgNNres <- residuals(m)
 ```
 
@@ -160,8 +160,9 @@ cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
 
 larry$use <- !is.na(larry$LARRY)
 larry$isBigClone <- larry$LARRY %in% bigclones
-DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "LARRY") + NoLegend() + scale_color_manual(values = cloneColors.here) + NoAxes() + ggtitle("LARRY Clone")
-DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "selected") + NoLegend() + NoAxes() + ggtitle("Selected by density") + scale_color_manual(values = c("TRUE" = "#AA0000", "FALSE" = "#555555"))
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "LARRY") + NoLegend() + scale_color_manual(values = cloneColors.here) + NoAxes()+ ggtitle('')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "CellType") + NoLegend() + scale_color_manual(values = celltypeColors) + NoAxes()+ ggtitle('')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "selected") + NoLegend() + NoAxes() + scale_color_manual(values = c("TRUE" = "#AA0000", "FALSE" = "#555555")) + ggtitle('')
 
 ```
 
@@ -179,11 +180,12 @@ forAUC <-data.frame( true_small_clones = larry$csize <= ncells.bigClone,
     forAUC <- na.omit(forAUC)
     predictions <- prediction( forAUC$predictor, forAUC$true_small_clones)
     perf <- performance(predictions, measure = "tpr", x.measure = "fpr" )
+
       plot(perf)
       abline(0,1)
 
+
       auc <- performance(predictions, measure = "auc")
-    
 
 ```
 
@@ -218,9 +220,9 @@ We can now plot the clustering result and the ground truth clonal labels side by
 
 ```{r clusterresult, echo=F, fig.width=4,fig.height=4.2}
 
-    DimPlot(for_clustering, reduction="cloneUMAP", label =T)  + NoLegend() + ggtitle("Clustering") +NoAxes()
-    DimPlot(for_clustering, reduction="cloneUMAP", group.by = "LARRY")  + NoLegend() + ggtitle("LARRY Barcode") + NoAxes()
-
+DimPlot(for_clustering, reduction="cloneUMAP", label =T)  + NoLegend() + ggtitle("Clustering") +NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "LARRY")  + NoLegend() + NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "CellType")  + NoLegend() + NoAxes()
 ```
 
 The Adjusted Rand index is `r sprintf("%.3f", adj.rand.index(as.integer(as.factor(Idents(for_clustering))), as.integer(as.factor(for_clustering@meta.data[,trueClone]))))`.
