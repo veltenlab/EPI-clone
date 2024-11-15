@@ -76,7 +76,7 @@ larry <- RunUMAP(larry, reduction = "pca", dims = 1:50, verbose = F)
 
 ```{r setupcolors, echo = F}
 cloneorder <- table(larry$LARRY)
-bigclones <- names(cloneorder)[cloneorder > 30]
+bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > 0.01]
 cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
 cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
 names(cloneColors.here) <- cloneorder
@@ -93,8 +93,17 @@ DimPlot(larry, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() 
 In the main figure of the manuscript we show only the cells that carry a LARRY barcode. The cells where no LARRY barcode was observed (`r sprintf("%.1f %%", 100*mean(is.na(larry$LARRY)))` of cells - due to dropout, or cells falsely sorted as LARRY+ in the FACS) follow a similar distribution.
 
 ```{r fig1b_clone_all, fig.width=6,fig.height=4}
+cloneorder <- table(larry$LARRY)
+#bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > 0.005]
+cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
+
+#cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
+#names(cloneColors.here) <- cloneorder
+cloneColors.here <- scales::hue_pal()(length(cloneorder))
+names(cloneColors.here) <- sample(names(cloneColors.here), length(names(cloneColors.here)))
+cloneColors.here <- sample(cloneColors.here, length(cloneColors.here))
 larry$use <- ifelse(!is.na(larry$LARRY), "LARRY barcode", "no LARRY barcode")
-DimPlot(larry, group.by = "LARRY",reduction="umap", order=cloneorder, split.by = "use") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = cloneColors.here)
+DimPlot(subset(larry, subset=use=="LARRY barcode"), group.by = "LARRY",reduction="umap", order=cloneorder) + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = cloneColors.here)
 ```
 
 Here, different shades of grey correspond to different LARRY clones represented with up to 30 cells and different colors correspond to different LARRY clones represented with >30 cells.
@@ -106,26 +115,26 @@ This plot suggests that overall, the methylome is impacted both by differentiati
 To more cleanly identify clones, EPI-Clone first looks for CpGs that are *not* associated with differentiation. We use surface antigen expression as a proxy for differentiation, since it is completely independent of methylation; alternatively, if you have good cell state annotation obtained from methylation (see also other vignette on cell state), this can be used as well.  The `epiclone` wrapper function can handle both cases.
 
 ```{r epiclone_pt1a, warning=FALSE, message=FALSE}
+min_cells <- 10
 
-  #compute minimum pvalue for asociation with (any) protein
-  suppressWarnings({
-    
+#compute minimum pvalue for asociation with (any) protein
+suppressWarnings({
   pvals <- apply(larry@assays$DNAm@data,1, function(met) {
     apply(larry@assays$AB@data, 1, function(prot) {
       use <- !is.na(prot)
       a <- prot[use][met[use]==1]
       b <- prot[use][met[use]==0]
-      if (length(a) < 3 | length(b) < 3) return(1) else return(ks.test(a,b)$p.value)
+      if (length(a) < min_cells | length(b) < min_cells) return(1) else return(ks.test(a,b)$p.value)
     })
-  })
-  min_pval <- apply(pvals,2,min)
-  
-  #establish bonferroni criterion
-  thr.protein.ass <- 1/(nrow(larry@assays$DNAm@data) * nrow(larry@assays$AB@data))
-  
-  #determine average overall methylation level
-  avg_meth_rate <- apply(larry@assays$DNAm@data, 1, mean)
-  })
+})
+min_pval <- apply(pvals, 2, min)
+
+#establish bonferroni criterion
+thr.protein.ass <- 1/(nrow(larry@assays$DNAm@data) * nrow(larry@assays$AB@data))
+
+#determine average overall methylation level
+avg_meth_rate <- apply(larry@assays$DNAm@data, 1, mean)
+})
 ```
 
 
@@ -155,8 +164,8 @@ suppressWarnings({
 
 CpGSelection <- data.frame(CpG = names(pvals_cloneass), avg_meth_rate, min_pval, pvals_cloneass)
 selected_not_protein <- names(min_pval)[min_pval > thr.protein.ass & avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate]
-CpGSelection$Type <- ifelse(row.names(CpGSelection)%in%selected_not_protein, 'Static', 'Dynamic')
-write.csv(CpGSelection, 'cpg_selection.csv')
+CpGSelection$Type <- ifelse(row.names(CpGSelection)%in%selected_not_protein, 'Static', ifelse(avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate, 'Dynamic', NA))
+write.csv(CpGSelection, '../out/cpg_selection.csv')
 panel <- read.table('../infos/panel_info_dropout_pwm.tsv',
                     sep='\t',
                     header=TRUE)
@@ -171,7 +180,6 @@ ggplot(to_plot, aes(x = AvgMeth, y = log10(ifelse(PVal<1e-21, 1e-21, PVal)), col
   plot_theme + xlab("Average methylation") + ylab(ifelse(is.null(thr.protein.ass), "p value cell state association", "Association with surface\nprotein [log10]")) +
   scale_color_gradientn(colours = c("black","blue","red"), name = "-log10 p-val\nClone association")+
   scale_y_continuous(breaks=c(0, -7.5, -15), limits = c(-22,5))
-
 
 ```
 
@@ -189,14 +197,15 @@ plot_dat$ChromState <- c("active/weak promoter"='Other',
                         "strong enhancer"='Enhancer',
                         "transcription"='Other',
                         "weak enhancer"='Enhancer')[plot_dat$ChromState]
-plot_dat$Type <- ifelse(row.names(plot_dat)%in%selected_not_protein, 'static', 'dynamic')
-to_plot_dynamic <- plyr::count(plot_dat[plot_dat$Type=='dynamic', ])
-to_plot_static <- plyr::count(plot_dat[plot_dat$Type=='static', ])
-to_plot_dynamic$freq <- to_plot_dynamic$freq/sum(to_plot_dynamic$freq)
-to_plot_static$freq <- to_plot_static$freq/sum(to_plot_static$freq)
+plot_dat <- data.frame(plot_dat[ ,'ChromState', drop=FALSE], CpGSelection)
+plot_dat <- na.omit(plot_dat)
+to_plot_dynamic <- plyr::count(plot_dat[plot_dat$Type=='Dynamic', ])
+to_plot_static <- plyr::count(plot_dat[plot_dat$Type=='Static', ])
+to_plot_dynamic$freq <- as.numeric(to_plot_dynamic$freq/sum(to_plot_dynamic$freq))
+to_plot_static$freq <- as.numeric(to_plot_static$freq/sum(to_plot_static$freq))
 to_plot <- rbind(to_plot_dynamic, to_plot_static)
 fisher.p <- fisher.test(table(plot_dat[plot_dat$ChromState!='Other', c('Type', 'ChromState')]))
-ggplot(to_plot, aes(x=Type, y=freq*100, fill=ChromState))+geom_bar(stat = 'identity')+plot_theme_legend+scale_fill_manual(values=cols_chrom)+xlab('CpG Class')+ylab('%of CpGs in chromatin state')
+ggplot(to_plot, aes(x=Type, y=freq*100, fill=ChromState))+geom_bar(stat = 'identity')+plot_theme+scale_fill_manual(values=cols_chrom)+xlab('CpG Class')+ylab('%of CpGs in chromatin state')
 
 ```
 
@@ -208,9 +217,8 @@ Static CpGs are enriched in heterochromatic regions with p-value `r paste(fisher
 ```{r methylation_stae}
 meth_cpgs <- GetAssayData(larry, assay="DNAm", slot='counts')
 plot_dat <- data.frame(Type=CpGSelection$Type, Methylation=ifelse(rowMeans(meth_cpgs[row.names(CpGSelection),])>0.5, 'Methylated', 'Unmethylated'))
-to_plot <- plyr::count(plot_dat)
+to_plot <- plyr::count(na.omit(plot_dat))
 to_plot[to_plot$Type=='Dynamic', 'freq'] <- to_plot[to_plot$Type=='Dynamic', 'freq']/sum(to_plot[to_plot$Type=='Dynamic', 'freq'])
 to_plot[to_plot$Type=='Static', 'freq'] <- to_plot[to_plot$Type=='Static', 'freq']/sum(to_plot[to_plot$Type=='Static', 'freq'])
 ggplot(to_plot, aes(x=Type, y=freq*100, fill=Methylation))+geom_bar(stat = 'identity')+plot_theme+xlab('CpG Class')+ylab('%of CpGs')+scale_fill_manual(values=c('Methylated'='#000000ff','Unmethylated'='#fcffa4ff'))
-ggsave(file.path(plot_path, 'methylation_state.pdf'), height=50, width=35, unit='mm')
 ```

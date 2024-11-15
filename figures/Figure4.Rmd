@@ -89,19 +89,21 @@ source('../scripts/EPIClone.R')
 
 ```{r execute_epiclone}
 npcs <- 100
-thrbig <- 30
+thrbig <- 1
 epi_old <- epiclone(subset(full_seurat, Sample == "Old"), plotFolder = '.', tuneParams = F, 
                     npcs.Clustering = npcs, selected.CpGs = static_cpgs, trueClone = NULL, batch = "Sample", protein.assay.name = NULL, 
                     thr.bigCloneSelection = thrbig,npcs.bigCloneSelection = npcs, smoothen.bigCloneSelection = 20, celltype = "CellType",
-                    ncells.bigClone = 30, returnIntermediateSeurat = F)
+                    bigClone.relSize = 0.01, returnIntermediateSeurat = F)
 epi_young <- epiclone(subset(full_seurat, Sample == "Young"), plotFolder = '.', tuneParams = F, 
                       npcs.Clustering = npcs, selected.CpGs = static_cpgs, trueClone = NULL, batch = "Sample", protein.assay.name = NULL, 
                       thr.bigCloneSelection = thrbig,npcs.bigCloneSelection = npcs, smoothen.bigCloneSelection = 20, celltype = "CellType",
-                      ncells.bigClone = 30, returnIntermediateSeurat = F)
+                      bigClone.relSize = 0.01, returnIntermediateSeurat = F)
 
 ```
 
 ## Visualize clonal UMAP of young mouse
+
+In contrast to the transplantation setting, we expect a more polyclonal setting in native hematopoiesis. Thus, we change the threshold for selecting big clones from 0.5% to a more stringent 1%.
 
 ```{r clonal_umaps}
 plot_theme_legend <- theme(panel.background = element_rect(color='black',fill='white'),
@@ -125,18 +127,17 @@ epi_old_seurat <- epi_old$finalSeurat
 clones <- as.character(epi_old_seurat$seurat_clusters)
 sizes_old <- plyr::count(clones)
 sizes_old$RelFreq <- sizes_old$freq/sum(sizes_old$freq)
-small_clones <- sizes_old$x[sizes_old$RelFreq<0.01]
+small_clones <- sizes_old$x[sizes_old$RelFreq<=0.01]
 epi_old_seurat$seurat_clusters[epi_old_seurat$seurat_clusters%in%small_clones] <- NA
 epi_young_seurat <- epi_young$finalSeurat
 clones <- as.character(epi_young_seurat$seurat_clusters)
 sizes_young <- plyr::count(clones)
 sizes_young$RelFreq <- sizes_young$freq/sum(sizes_young$freq)
-small_clones <- sizes_young$x[sizes_young$RelFreq<0.01]
+small_clones <- sizes_young$x[sizes_young$RelFreq<=0.01]
 epi_young_seurat$seurat_clusters[epi_young_seurat$seurat_clusters%in%small_clones] <- NA
 to_plot <- data.frame(epi_young_seurat[["cloneUMAP"]]@cell.embeddings, Clone=epi_young_seurat$seurat_clusters)
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
-ggplot(to_plot, aes(x=CLONEUMAP_1 , y=CLONEUMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=cols, na.value = 'gray75')+theme(panel.background = element_blank())
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/young_clonal_umap.png', height = 60, width=50, unit='mm')
+ggplot(to_plot, aes(x=CLONEUMAP_1 , y=CLONEUMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c(cols, cols), na.value = 'gray75')+theme(panel.background = element_blank())
 ```
 
 ```{r compare_cluster_sizes}
@@ -153,8 +154,7 @@ to_plot <- sizes_young
 to_plot$x <- factor(to_plot$x, levels=to_plot$x[order(to_plot$RelFreq, decreasing = TRUE)])
 
 ggplot(to_plot, aes(x='', y=RelFreq, fill=x))+geom_histogram(stat='identity', position = 'stack', width=1) +
-  coord_polar("y", start=0)+plot_theme+ylab('Frequency')+scale_fill_manual(values=cols, na.value='gray75')+ylab('')+xlab('')+theme(axis.text.x=element_blank(), panel.background = element_blank())
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/clone_sizes_young.pdf', height = 30, width=40, unit='mm')
+  coord_polar("y", start=0)+plot_theme+ylab('Frequency')+scale_fill_manual(values=c(cols, cols), na.value='gray75')+ylab('')+xlab('')+theme(axis.text.x=element_blank(), panel.background = element_blank())
 ```
 
 ## Cell state UMAP
@@ -178,7 +178,6 @@ ggplot(to_plot, aes(x=Sample, y=RelFreq, fill=x))+geom_histogram(stat='identity'
 to_plot <- data.frame(epi_old_seurat[["cloneUMAP"]]@cell.embeddings, Clone=epi_old_seurat$seurat_clusters)
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 ggplot(to_plot, aes(x=CLONEUMAP_1 , y=CLONEUMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=cols, na.value = 'gray75')+theme(panel.background = element_blank())
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/old_clonal_umap.png', height = 60, width=50, unit='mm')
 ```
 
 ```{r clone_sizes_old}
@@ -193,7 +192,6 @@ cols <- unlist(mapply(brewer.pal, qual_cols$maxcolors, rownames(qual_cols)))
 
 ggplot(to_plot, aes(x='', y=RelFreq, fill=x))+geom_histogram(stat='identity', position = 'stack', width=1) +
   coord_polar("y", start=0)+plot_theme+ylab('Frequency')+scale_fill_manual(values=cols, na.value='gray75')+ylab('')+xlab('')+theme(axis.text.x=element_blank(), panel.background = element_blank())
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/clone_sizes_old.pdf', height = 30, width=40, unit='mm')
 ```
 
 ```{r compare_clone_sizes}
@@ -207,15 +205,20 @@ sizes_young$RelFreq <- (sizes_young$freq)/sum((sizes_young$freq))
 sizes_young$Sample <- 'Young'
 to_plot <- rbind(sizes_old, sizes_young)
 to_plot$Replicate <- 'Replicate1'
-rep2 <- read.csv('../infos/compare_clone_sizes.csv', row.names=1)
+rep2 <- read.csv('../infos/clone_sizes_aging_replicate.csv', row.names=1)
 rep2$Replicate <- 'Replicate2'
 to_plot <- rbind(to_plot, rep2)
-ggplot(to_plot, aes(x=Sample, y=RelFreq, fill=x))+geom_histogram(stat='identity')+plot_theme+scale_fill_manual(values=cols, na.value = 'gray75')+facet_wrap(Replicate~., nrow=1)
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/compare_clone_sizes.pdf', height = 65, width=40, unit='mm')
+ggplot(to_plot, aes(x=Sample, y=RelFreq, fill=x))+geom_histogram(stat='identity')+plot_theme+scale_fill_manual(values=c(cols, cols), na.value = 'gray75')+facet_wrap(Replicate~., nrow=1)
 print(paste('Old big clone (rep1)', sum(sizes_old[!is.na(sizes_old$x), 'RelFreq']), 'Small clones:', sizes_old[is.na(sizes_old$x), 'RelFreq']))
 print(paste('Old big clone (rep2)', sum(rep2[!is.na(rep2$x)&rep2$Sample=='Old', 'RelFreq']), 'Small clones:', rep2[is.na(rep2$x)&rep2$Sample=='Old', 'RelFreq']))
 print(paste('Young big clone', sum(sizes_young[!is.na(sizes_young$x), 'RelFreq']), 'Small clones:', sizes_young[is.na(sizes_young$x), 'RelFreq']))
 print(paste('Young big clone (rep2)', sum(rep2[!is.na(rep2$x)&rep2$Sample=='Young', 'RelFreq']), 'Small clones:', rep2[is.na(rep2$x)&rep2$Sample=='Young', 'RelFreq']))
+```
+
+We now also compare the number of expanded clones in the four experiments.
+
+```{r compare_numbers}
+table(to_plot[,c('Sample', 'Replicate')])
 ```
 
 ```{r largest_clones}
@@ -235,11 +238,15 @@ sizes_young <- sizes_young[order(sizes_young$RelFreq, decreasing = TRUE), ]
 sizes_young$x <- 1:nrow(sizes_young)
 to_plot <- data.frame(rbind(sizes_old[1:20, ], sizes_young[1:20, ]))
 to_plot$Replicate <- 'Replicate1'
-rep2 <- read.csv('../infos/compare_cluster_sizes_largest.csv', row.names=1)
+rep2 <- read.csv('../infos/clone_sizes_aging_replicate_largest.csv',
+                 row.names=1)
 rep2$Replicate <- 'Replicate2'
 to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot, aes(x=x, y=RelFreq, fill=Sample, color=Replicate))+geom_histogram(stat='identity', position = 'dodge', size=.1)+scale_fill_manual(values=c('Old'='gray75', 'Young'='gray25'))+scale_color_manual(values=c('Replicate1'='black', 'Replicate2'='black'))+plot_theme+xlab('Clone by size')+theme(axis.text.x = element_blank())+ylab('Frequency')
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/compare_cluster_sizes_largest.pdf', height = 20, width=100, unit='mm')
+```
+
+```{r statistics_clone_sizes}
+wilcox.test(to_plot$RelFreq[to_plot$Sample=='Old'], to_plot$RelFreq[to_plot$Sample=='Young'])
 ```
 
 ```{r clonal_output_old}
@@ -304,7 +311,6 @@ hm <- ComplexHeatmap::Heatmap(frequencies[, c('immature', 'erythroid', 'myeloid'
                               show_heatmap_legend =FALSE,
                               right_annotation = row_anno,
                               column_names_gp = grid::gpar(fontsize = 8))
-
 draw(hm)
 
 frequencies_old <- frequencies
@@ -313,6 +319,13 @@ frequencies_old$Annotation <- row_anno_fr$Annotation
 immature_old <- data.frame(CellType=rowinfo$CellType, seurat_clusters=rowinfo$Clone)
 ```
 
+```{r stastics_myeloid_immature}
+norm_myeloid <- frequencies_old$myeloid+frequencies_old$erythroid/sum(frequencies_old$myeloid+frequencies_old$erythroid)
+norm_lymphoid <- frequencies_old$lymphoid/sum(frequencies_old$lymphoid)
+wilcox.test(norm_myeloid[frequencies_old$Annotation=='Myeloid Biased'], norm_myeloid[frequencies_old$Annotation!='Myeloid Biased'])
+wilcox.test(norm_myeloid[frequencies_old$Annotation=='Lymphoid Biased'], norm_myeloid[frequencies_old$Annotation!='Lymphoid Biased'])
+wilcox.test(norm_myeloid[frequencies_old$Annotation=='Immature'], norm_myeloid[frequencies_old$Annotation!='Immature'])
+```
 
 ```{r clonal_output_young}
 clones <- Idents(epi_young_seurat)
@@ -351,11 +364,11 @@ frequencies <- apply(frequencies, 2, function(x)x/sum(x))
 frequencies <- frequencies/rowSums(frequencies)
 clust <- cutree(hclust(dist(frequencies, 'euclidean'), method='ward.D2'), 6)
 clust_annotation <- c('1'='Balanced',
-                      '2'='Balanced',
+                      '2'='Lymphoid Biased',
                       '3'='Balanced',
-                      '4'='Lymphoid Biased',
+                      '4'='Myeloid Biased',
                       '5'='Myeloid Biased',
-                      '6'='Lymphoid Biased')
+                      '6'='Myeloid Biased')
 row_anno_fr <- data.frame(Annotation=clust_annotation[as.character(clust)], row.names = clone_counts$x)
 row_anno <- HeatmapAnnotation(df=row_anno_fr,
                               show_legend = FALSE,
@@ -385,6 +398,13 @@ immature_young <- data.frame(CellType=rowinfo$CellType, seurat_clusters=rowinfo$
 
 ```
 
+```{r stastics_myeloid_immature_young}
+norm_myeloid <- frequencies$myeloid+frequencies$erythroid/sum(frequencies$myeloid+frequencies$erythroid)
+norm_lymphoid <- frequencies$lymphoid/sum(frequencies$lymphoid)
+wilcox.test(norm_myeloid[frequencies$Annotation=='Myeloid Biased'], norm_myeloid[frequencies$Annotation!='Myeloid Biased'])
+wilcox.test(norm_myeloid[frequencies$Annotation=='Lymphoid Biased'], norm_myeloid[frequencies$Annotation!='Lymphoid Biased'])
+#t.test(norm_myeloid[frequencies$Annotation=='Immature'], norm_myeloid[frequencies$Annotation!='Immature'])
+```
 
 ```{r investigate_immature}
 #Investigate the number of HSC being part of small and big clones
@@ -418,13 +438,16 @@ young_in_big_clone <- young_in_big_clone[order(young_in_big_clone$RelFreq, decre
 young_in_big_clone$seurat_clusters <- 1:nrow(young_in_big_clone)
 to_plot <- rbind(old_in_big_clone[1:20, ], young_in_big_clone[1:20, ])
 to_plot$Replicate <- 'Replicate1'
-rep2 <- read.csv('../infos/HSC_percentage_young_old.csv', row.names=1)
+rep2 <- read.csv('../infos/HSC_percentage_young_old_replicate.csv', row.names=1)
 rep2$Replicate <- 'Replicate2'
 to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot[!is.na(to_plot$CellType),], aes(x=seurat_clusters, y=RelFreq, fill=Sample, color=Replicate))+scale_color_manual(values=c('Replicate1'='black', 'Replicate2'='black'))+geom_histogram(stat='identity', position='dodge', size=.1)+
   plot_theme+scale_fill_manual(values=c('Old'='#cc246eff', 'Young'='#661237ff'))+xlab('Clones')+
   theme(axis.text.x = element_blank())+ylab('Percentage of all HSC/MPP1 in clone')
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/immature_proportion_per_clone.pdf', height = 20, width=100, unit='mm')
+```
+
+```{r immature_statistics}
+wilcox.test(to_plot$RelFreq[to_plot$Sample=='Old'], to_plot$RelFreq[to_plot$Sample=='Young'])
 ```
 
 ```{r investigate_myeloid}
@@ -450,13 +473,16 @@ young_in_big_clone <- young_in_big_clone[order(young_in_big_clone$RelFreq, decre
 young_in_big_clone$seurat_clusters <- 1:nrow(young_in_big_clone)
 to_plot <- rbind(old_in_big_clone[1:20, ], young_in_big_clone[1:20, ])
 to_plot$Replicate <- 'Replicate1'
-rep2 <- read.csv('../infos/myeloid_percentage_young_old.csv', row.names=1)
+rep2 <- read.csv('../infos/myeloid_percentage_young_old_replicate.csv', row.names=1)
 rep2$Replicate <- 'Replicate2'
 to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot[!is.na(to_plot$CellType),], aes(x=seurat_clusters, y=RelFreq, fill=Sample, color=Replicate))+geom_histogram(stat='identity', position='dodge', size=.1)+
   plot_theme+scale_fill_manual(values=c('Old'='#d9d98e', 'Young'='#808054'))+scale_color_manual(values=c('Replicate1'='black', 'Replicate2'='black'))+xlab('Clones')+
   theme(axis.text.x = element_blank())+ylab('Percentage of all myeloid cells in clone')
-ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/aging/myeloid_percentage_young_old.pdf', height = 20, width=100, unit='mm')
+```
+
+```{r myeloid_statistics}
+wilcox.test(to_plot$RelFreq[to_plot$Sample=='Old'], to_plot$RelFreq[to_plot$Sample=='Young'])
 ```
 
 ```{r plot_clone}
@@ -483,33 +509,25 @@ to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_young_mpp4 <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
 
 # Balanced high output young
-sel_clone <- '6'
+sel_clone <- '0'
 to_plot <- data.frame(epi_young_seurat[["umap"]]@cell.embeddings, Clone=epi_young_seurat$seurat_clusters)
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_young_balanced <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
 
 #Low output clone old
-sel_clone <- '2'
+sel_clone <- '3'
 to_plot <- data.frame(epi_old_seurat[["umap"]]@cell.embeddings, Clone=epi_old_seurat$seurat_clusters)
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_old_low_output <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
 
 #Low output clone old
-sel_clone <- '5'
+sel_clone <- '0'
 to_plot <- data.frame(epi_old_seurat[["umap"]]@cell.embeddings, Clone=epi_old_seurat$seurat_clusters)
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_old_high_output <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
 
 grid.arrange(plot_old_low_output, plot_old_high_output, plot_young_balanced, plot_young_mpp4, nrow=1)
-```
-
-
-```{r write_matrices_for_python}
-epi_old_seurat$Clones <- paste0('Clone', Idents(epi_old_seurat))
-write.csv(epi_old_seurat[[]], 'table_old.csv')
-epi_young_seurat$Clones <- paste0('Clone', Idents(epi_young_seurat))
-write.csv(epi_young_seurat[[]], 'table_young.csv')
 ```
