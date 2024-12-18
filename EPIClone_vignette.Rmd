@@ -1,9 +1,15 @@
 ---
 title: "EPI-Clone"
 author: "Michael Scherer & Lars Velten"
-date: "13/11/2024"
+date: "18/12/2024"
 output: html_document
 ---
+
+## Experimental design
+
+This vignette describes how EPI-clone can cluster cells by clonal identity without requiring genetic barcoding (such as LARRY).
+
+![Figure 1: Experimental design for EPi-Clone. A shows how LARRY barcodes were introduced into HSCs and transplanted into four recipient mice analyzed here. B gives an overview of EPI-Clone.](figures/Figure3/exp_overview_Fig3.png)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -66,7 +72,7 @@ larry <- subset(full_seurat, Experiment == "LARRY main experiment")
 
 We perform straightforward Seurat dimensionality reduction
 
-```{r full_seurat, message=FALSE, warning=FALSE}
+```{r full_seurat_all, message=FALSE, warning=FALSE}
 usecpg <- rownames(larry)
 larry <- ScaleData(larry, assay = "DNAm", features = usecpg, verbose = F)
 larry <- RunPCA(larry, assay = "DNAm", features = usecpg, reduction.name = "pca", reduction.key = "PC_", npcs = 100, verbose = F)
@@ -83,8 +89,7 @@ names(cloneColors.here) <- cloneorder
 cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
 ```
 
-
-We can highlight on this the *Celltype* annotation. See the other vignette on how it was obtained.
+We can highlight on this the *Celltype* annotation. See the other [vignette](../Figure1/Figure1.Rmd) for Figure 1 on how it was obtained.
 
 ```{r fig1b_celltype_all, fig.width=4,fig.height=4}
 DimPlot(larry, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = celltypeColors)
@@ -94,11 +99,8 @@ In the main figure of the manuscript we show only the cells that carry a LARRY b
 
 ```{r fig1b_clone_all, fig.width=6,fig.height=4}
 cloneorder <- table(larry$LARRY)
-#bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > 0.005]
 cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
 
-#cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
-#names(cloneColors.here) <- cloneorder
 cloneColors.here <- scales::hue_pal()(length(cloneorder))
 names(cloneColors.here) <- sample(names(cloneColors.here), length(names(cloneColors.here)))
 cloneColors.here <- sample(cloneColors.here, length(cloneColors.here))
@@ -180,10 +182,22 @@ ggplot(to_plot, aes(x = AvgMeth, y = log10(ifelse(PVal<1e-21, 1e-21, PVal)), col
   plot_theme + xlab("Average methylation") + ylab(ifelse(is.null(thr.protein.ass), "p value cell state association", "Association with surface\nprotein [log10]")) +
   scale_color_gradientn(colours = c("black","blue","red"), name = "-log10 p-val\nClone association")+
   scale_y_continuous(breaks=c(0, -7.5, -15), limits = c(-22,5))
-
 ```
 
-```{r setupcolors, echo = F}
+The `r sprintf("n = %d", length(selected_not_protein))` dots in the upper central rectangle of this plot (Figure 1D) are of interest as static CpGs and used further for clustering of clones
+
+We perform straightforward Seurat dimensionality reduction.
+
+```{r full_seurat, message=FALSE, warning=FALSE}
+usecpg <- rownames(larry)
+larry <- ScaleData(larry, assay = "DNAm", features = usecpg, verbose = F)
+larry <- RunPCA(larry, assay = "DNAm", features = usecpg, reduction.name = "pca", reduction.key = "PC_", npcs = 100, verbose = F)
+larry <- RunUMAP(larry, reduction = "pca", dims = 1:50, verbose = F)
+selected_not_protein <- row.names(subset(CpGSelection, subset=Type=='Static'))
+```
+
+
+```{r setupcolors_2, echo = F}
 bigClone.relSize <- 0.0025
 cloneorder <- table(larry$LARRY)
 bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > bigClone.relSize]
@@ -336,7 +350,7 @@ We can also plot the overlap as a heatmap:
 
 ```{r heatmap, echo=F, fig.width=6,fig.height=4}
 cloneSizes <- table(for_clustering@meta.data[,trueClone])
-new_clust <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]] <= 10, "small clone", for_clustering@meta.data[,trueClone]))
+new_clust <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]]/sum(cloneSizes) <= 0.0025, "small clone", for_clustering@meta.data[,trueClone]))
 names(new_clust) <- Cells(for_clustering)
 for_clustering$CloneForRiver <- new_clust
 
@@ -356,7 +370,3 @@ rownames(forriver_norm)[!rownames(forriver_norm) %in% c("NA","small clone")] <- 
 pheatmap(forriver_norm[,order(maxis)],cluster_cols = F,fontsize_col=6,clustering_distance_rows = dist(forriver_norm[,order(maxis)]),
          color = colorRampPalette(c("white","blue","purple","red"))(100))
 ```
-
-
-Careful with cluster 4 - a big cluster mostly containing cells from small clones and NA! Likely this is a cluster of cells that falsely passed the original selection of "expanded clones"! We excluded it from the analyses in figure 2f+g.
-

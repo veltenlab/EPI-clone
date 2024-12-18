@@ -15,7 +15,7 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
                   plotFolder = "plots", tuneParams = F, tuneParams.cores = 6,
                   methylation.assay.name = "DNAm", protein.assay.name = "AB",
                   lower.thr.methrate = 0.25, upper.thr.methrate = 0.9, thr.protein.ass = NULL,selected.CpGs = NULL,
-                  bigClone.relSize = 0.005, npcs.bigCloneSelection = 100, k.bigCloneSelection = 5, thr.bigCloneSelection =1, smoothen.bigCloneSelection = NULL,
+                  bigClone.relSize = 0.0025, npcs.bigCloneSelection = 100, k.bigCloneSelection = 5, thr.bigCloneSelection =1, smoothen.bigCloneSelection = NULL,
                   npcs.Clustering = 100, k.Clustering = 25, res.Clustering=5, returnIntermediateSeurat = F,
                   performance.field='PerformanceNonHhaI') {
   suppressMessages({
@@ -46,7 +46,7 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
           use <- !is.na(prot)
           a <- prot[use][met[use]==1]
           b <- prot[use][met[use]==0]
-          if (length(a) < 3 | length(b) < 3) return(1) else return(ks.test(a,b)$p.value)
+          if (length(a) < 10 | length(b) < 10) return(1) else return(ks.test(a,b)$p.value)
         })
       })
       min_pval <- apply(pvals,2,min)
