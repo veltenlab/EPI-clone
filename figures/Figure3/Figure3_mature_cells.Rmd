@@ -90,7 +90,7 @@ npcs <- 100
 thrbig <- 0.5
 static_cpgs <- read.csv('../../infos/cpg_selection.csv',
                   row.names = 1)
-static_cpgs <- row.names(static_cpgs[static_cpgs$Type=='Static', ])
+static_cpgs <- row.names(static_cpgs[which(static_cpgs$Type=='Static'), ])
 seurat_obj$Sample <- 'MatureMyeloid'
 seurat_obj$use <- !is.na(seurat_obj$LARRY)
 epiclone_obj <- epiclone(seurat_obj, plotFolder = '.', tuneParams = F, res.Clustering = 3,
@@ -132,4 +132,10 @@ We now investigated whether there is a relationship between EPI-clone performanc
 summarized_expression <- aggregate(t(GetAssayData(epiclone_seurat, 'AB')), by=list(epiclone_seurat$CellType), mean)
 cor(adj_rand, summarized_expression[,-1])
 plot(adj_rand, summarized_expression$`CD8-raw`)
+```
+
+```{r static_cell_types}
+DimPlot(epiclone_seurat,
+        reduction='cloneUMAP',
+        group.by='CellType')+scale_color_manual(values = celltypeColors)+ggtitle("")+NoAxes()
 ```
