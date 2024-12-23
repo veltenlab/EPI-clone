@@ -10,14 +10,18 @@ require(RColorBrewer)
 require(gridExtra)
 require(fossil)
 require(ROCR)
+require(reticulate)
+require(SingleCellExperiment)
+require(CHOIR)
 
 epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", celltype = "seurat_clusters",
-                  plotFolder = "plots", tuneParams = F, tuneParams.cores = 6,
-                  methylation.assay.name = "DNAm", protein.assay.name = "AB",
-                  lower.thr.methrate = 0.25, upper.thr.methrate = 0.9, thr.protein.ass = NULL,selected.CpGs = NULL,
-                  bigClone.relSize = 0.0025, npcs.bigCloneSelection = 100, k.bigCloneSelection = 5, thr.bigCloneSelection =1, smoothen.bigCloneSelection = NULL,
-                  npcs.Clustering = 100, k.Clustering = 25, res.Clustering=5, returnIntermediateSeurat = F,
-                  performance.field='PerformanceNonHhaI') {
+                     plotFolder = "plots", tuneParams = F, tuneParams.cores = 6,
+                     methylation.assay.name = "DNAm", protein.assay.name = "AB",
+                     lower.thr.methrate = 0.25, upper.thr.methrate = 0.9, thr.protein.ass = NULL,selected.CpGs = NULL,
+                     bigClone.relSize = 0.0025, npcs.bigCloneSelection = 100, k.bigCloneSelection = 5, thr.bigCloneSelection = 1, smoothen.bigCloneSelection = NULL,
+                     bigclone.method = "NN",
+                     npcs.Clustering = 100, k.Clustering = 25, res.Clustering = 5, returnIntermediateSeurat = F, runCHOIR = F, choir.cores = 2,
+                     performance.field='PerformanceNonHhaI') {
   suppressMessages({
     
     if (!is.null(trueClone)) seurat_obj@meta.data[,trueClone] <- as.character(seurat_obj@meta.data[,trueClone])
@@ -33,7 +37,7 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     
     plots <- list()
     results <- list()
-    DNAm <- GetAssayData(seurat_obj, assay=methylation.assay.name)
+    DNAm <- GetAssayData(seurat_obj, assay = methylation.assay.name, layer = "data")
     if (!is.null(protein.assay.name)) protein <- GetAssayData(seurat_obj, assay=protein.assay.name)
     
     
@@ -97,6 +101,9 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     selected_not_protein <- names(min_pval)[min_pval > thr.protein.ass & avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate]
     cat(length(selected_not_protein), "CpGs selected\n")
     results[["selectedCpGs"]] <- selected_not_protein
+    selected_dynamic <- names(min_pval)[min_pval < thr.protein.ass & avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate]
+    results[["dynamicCpGs"]] <- selected_dynamic
+    
     } else selected_not_protein <- selected.CpGs
     
     
@@ -118,6 +125,7 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     
     
     #### 4. compute point density ####
+    if (bigclone.method == "NN") {
     seurat_obj <- FindNeighbors(seurat_obj, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = k.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" )
     add <- apply(seurat_obj@neighbors$clone.neighbors@nn.dist,1,function(x) mean(x[x>0]))
     add[is.na(add)] <- 0
@@ -140,7 +148,15 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
     }
     
     to.summarise$avgNNres <- seurat_obj$avgNNres
-    
+
+    } else if (runCHOIR) {
+      cat("Not estimating a density, just running CHOIR\n")
+    } else{ 
+      stop("No valid bigclone.method")
+      }
+
+
+
     if(!is.null(trueClone)) {
       to.summarise$cleanClone <- seurat_obj@meta.data[,trueClone]
       csize <- table(to.summarise$cleanClone)
@@ -151,10 +167,21 @@ epiclone <- function(seurat_obj, trueClone = "cleanClone", batch = "Sample", cel
       plots[["BigCloneSelection.ParameterSelection"]] <- ggplot(aes(x = csize+1, y = avgNNres), data = to.summarise) + scale_x_log10() + geom_point(position = position_jitter(width=0.1),size=.5) + ylab("Distance to nearest neighbors") + xlab("LARRY clone size") + geom_hline(yintercept = thr.bigCloneSelection, color = "red")
       
     }
-    plots[["BigCloneSelection.Density"]] <- FeaturePlot(seurat_obj, "avgNNres",reduction = "cloneUMAP") + scale_color_gradientn(colours = rev(c("red","blue","black")), name = "Distance to NN")#the worse cells all scatter more widely :-(
-    
-    seurat_obj$selected <- seurat_obj$avgNNres < thr.bigCloneSelection
-    if (returnIntermediateSeurat) return(seurat_obj)
+    if (bigclone.method %in% c("NN","mellon")) {
+      plots[["BigCloneSelection.Density"]] <- FeaturePlot(seurat_obj, "avgNNres",reduction = "cloneUMAP") + scale_color_gradientn(colours = rev(c("red","blue","black")), name = "Distance to NN")#the worse cells all scatter more widely :-(
+      seurat_obj$selected <- seurat_obj$avgNNres < thr.bigCloneSelection
+    } 
+
+    if (returnIntermediateSeurat) {
+      
+      seurat_obj <- FindNeighbors(seurat_obj,reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = k.bigCloneSelection, graph.name = "clone_nn")
+      seurat_obj <- FindClusters(seurat_obj, resolution=res.Clustering, graph.name = "clone_nn")
+      if (runCHOIR) {
+        ef <- rownames(seurat_obj)[!rownames(seurat_obj) %in% selected_not_protein]
+        seurat_obj <- CHOIR(seurat_obj, n_core = choir.cores, use_slot = "data", exclude_features = ef, p_adjust = "fdr") #, min_cluster_depth = tolower(ncol(seurat_obj)/5)
+      }
+      return(list(seurat_obj, plots, results))
+    }
     
     plots[["BigCloneSelection.Selected"]] <- DimPlot(seurat_obj, group.by = "selected", reduction="cloneUMAP") 
     plots[["BigCloneSelection.Selected.CellState"]] <- DimPlot(seurat_obj, group.by = "selected") 

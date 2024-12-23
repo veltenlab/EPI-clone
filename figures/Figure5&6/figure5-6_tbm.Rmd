@@ -1,0 +1,308 @@
+---
+title: "EPI-Clone Figure 5,6 - Total Bone Marrow"
+output: html_document
+date: "2024-12-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cowplot)
+library(lme4)
+library(spatstat.explore)
+library(Seurat)
+source("../../scripts/EPIClone.R")
+
+ctcolors <- c(
+  "Immature B" = "#4FAEEB",
+  "Mature B" = "#A1D2FB",
+  "NK cells" = "#9176C8",
+  "Eo/Baso" = "#AC3A3A",
+  "CD34+" = "maroon4",
+  "Erythroid" = "#ED7950",
+  "Monocyte" = "#508C46",
+  "pDC" = "lightgreen",
+  "CD4+ T cells" = "#AF6CC3",
+  "CD8+ T cells" = "#832DA4",
+  "Unclear" = "grey"
+)
+
+mutcolors <- c(
+  "N/A" = "grey30",
+  "wt" = "grey70",
+  "ASXL1 Q592X" = "firebrick",
+  "LoY" = "blue",
+  "DNMT3A R659H" = "coral3",
+  "PPM1D R552X" = "firebrick3",
+  "PPM1D W427Gfs" = "deeppink",
+  "DNMT3A I780T" = "firebrick4",
+  "DNMT3A Q606X" = "deeppink3",
+  "DNMT3A I310T" = "coral1",
+  "DNMT3A W440X" = "deeppink4",
+  "DNMT3A C666Y" = "orange2"
+)
+```
+
+```{r readData}
+S <- readRDS("/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/tbm_seurat.rds")
+use_cpgs <- scan("../../infos/static_CpGs_human.csv", what = character())
+
+patient.age <- S@meta.data %>%
+  distinct(sample, age) %>%               
+  arrange(age)                           
+
+patients <- patient.age$sample            
+patient.age <- patient.age$age           
+names(patient.age) <- patients   
+```
+
+# scanorama, methylome and protein based integration umap (Fig 5B, S12C)
+Loads the integrated data set of donors A.1-A.7
+```{r integrated_umap, fig.width=15}
+p1 <- DimPlot(S, reduction = "umap", group.by = "celltype", cols = ctcolors) + ggtitle("scanorama") + NoAxes() + coord_fixed() + NoLegend()
+p2 <- DimPlot(S, reduction = "umapmeth", group.by = "celltype", cols = ctcolors) + ggtitle("methylation") + NoAxes() + coord_fixed() + NoLegend()
+p3 <- DimPlot(S, reduction = "umapprot", group.by = "celltype", cols = ctcolors) + ggtitle("protein") + NoAxes() + coord_fixed()
+
+print(p1 + p2 + p3)
+```
+
+# run EPI-Clone using CHOIR
+```{r execute_epiclone}
+epiclones <- mclapply(patients, function(patient) {
+
+  seurat_subset <- subset(S, sample == patient)
+  seurat_subset <- subset(seurat_subset, celltype %in% c("Monocyte", "Erythroid", "CD34+", "pDC", "Immature B", "NK cells"))
+
+  out <- epiclone(
+    seurat_subset,
+    trueClone = NULL, batch = "sample", celltype = "celltype", performance.field = "NonHhaI",
+    lower.thr.methrate = 0.05, upper.thr.methrate = 0.95, k.bigCloneSelection = 50,
+    returnIntermediateSeurat = TRUE, npcs.bigCloneSelection = 30, selected.CpGs = use_cpgs,
+    res.Clustering = 2, bigclone.method = "CHOIR", runCHOIR = TRUE
+  )
+
+  out[[1]] <- RunTSNE(
+    out[[1]], reduction = "clonePCA", dims = 1:30,
+    reduction.name = "cloneTSNE", reduction.key = "CLONETSNE_"
+  )
+
+  return(out)
+}, mc.cores = 7, mc.allow.recursive = TRUE)
+```
+
+# clonal UMAPs (Fig 5C,D)
+```{r clonal_umaps, fig.width=15}
+plots <- lapply(patients, function(patient)
+  DimPlot(epiclones[[patient]][[1]], reduction = "cloneUMAP", group.by = "mutation", order = rev(names(mutcolors))) + 
+    NoAxes() + 
+    coord_fixed() + 
+    NoLegend() + 
+    ggtitle(patient) + 
+    scale_color_manual(values = mutcolors, na.value = "grey80"))
+plots <- arrangeGrob(grobs = plots, nrow = 1)
+umaps_mutations <- ggdraw() +
+  draw_plot(plots, y = 0, height = 0.95)
+
+plots <- lapply(patients, function(patient) {
+  epiclones[[patient]][[1]]$CHOIR_clusters_0.05[epiclones[[patient]][[1]]$CHOIR_clusters_0.05 == "1"] <- NA
+  DimPlot(epiclones[[patient]][[1]], reduction = "cloneUMAP", group.by = "CHOIR_clusters_0.05", label = F) + 
+    NoAxes() + 
+    coord_fixed() + 
+    NoLegend() + 
+    ggtitle(patient)})
+plots <- arrangeGrob(grobs = plots, nrow = 1)
+umaps_clones <- ggdraw() +
+  draw_plot(plots, y = 0, height = 0.95)
+
+umaps_mutations / umaps_clones
+```
+
+
+# clonal size and CHIP clones (Fig 5E)
+```{r chip_clones, fig.width=4.5, fig.height=3, warning=FALSE, message=FALSE}
+forplot <- bind_rows(lapply(epiclones, function(x) {
+  na.omit(data.frame(
+    mut = x[[1]]$mutation,
+    CHOIR = x[[1]]$CHOIR_clusters_0.05,
+    celltype = x[[1]]$celltype,
+    patient = unique(x[[1]]$sample)
+  ))
+}))
+
+patient_totals <- forplot %>%
+  group_by(patient) %>%
+  dplyr::summarise(total_patient_size = n(), .groups = "drop")
+
+forplot <- forplot %>%
+  mutate(mut = if_else(mut == "N/A", NA_character_, mut)) %>%
+  group_by(patient, CHOIR) %>%
+  dplyr::summarise(
+    size = n(),
+    perc.wt = mean(mut == "wt", na.rm = TRUE),
+    dominant = names(which.max(table(mut))),
+    .groups = "drop"
+  ) %>%
+  left_join(patient_totals, by = "patient") %>%
+  mutate(perc = size / total_patient_size)
+
+forplot$key <- with(forplot, paste(patient, CHOIR,sep= "_"))
+cluster2dominant <- forplot$dominant; names(cluster2dominant) <- forplot$key
+cluster2size <- forplot$size; names(cluster2size) <- forplot$key
+cluster2perc <- forplot$perc; names(cluster2perc) <- forplot$key
+
+to_plot <- forplot %>% dplyr::mutate(key = fct_reorder(key, perc))
+
+plot <- qplot(
+  x = key,
+  size = 100 * perc,
+  y = 100 * (1 - perc.wt),
+  data = subset(to_plot, CHOIR != "1"),
+  color = dominant
+) +
+  facet_grid(~patient, space = "free_x", scales = "free_x") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"  
+  ) +
+  ylab("% mutant") +
+  xlab("EPI-clone, by size") +
+  scale_color_manual(values = mutcolors, guide = "none") +
+  scale_size_area(
+    name = "Clone size (%)",
+    max_size = 4,
+    breaks = c(10, 20)  
+  )
+
+
+print(plot)
+```
+
+# Expansion of clones in age (Fig 6A)
+```{r expansion, fig.width=4, fig.height=3}
+age_thing <- data.frame(
+  patient = names(epiclones),
+  age = patient.age[names(epiclones)],
+  ncells = sapply(names(epiclones), function(n) ncol(epiclones[[n]][[1]])),
+  CHOIR.nclones =  sapply(names(epiclones), function(n) length(unique(epiclones[[n]][[1]]$CHOIR_clusters_0.05))-1))
+
+qplot(x = age, y = CHOIR.nclones, data =age_thing, label = patient, size = ncells) + ggrepel::geom_text_repel(size = 3) +  xlab("Age") +
+  theme_bw() + theme(panel.grid = element_blank()) + scale_color_gradientn(colors = c("black", "blue", "red", "orange"), name = "Max VAF (CHIP)") + ylab("Expanded clones") +
+  scale_size_area(name = "# cells", max_size = 4) 
+```
+
+# lineage biases expanded vs non expanded clones (Fig 6D, S13 F)
+```{r lineages_1}
+epiclone_vs_celltype <- lapply(patients, function(n) {
+  epiclones[[n]][[1]]$simplecelltype <- epiclones[[n]][[1]]$celltype
+  out <- table(epiclones[[n]][[1]]$CHOIR_clusters_0.05, epiclones[[n]][[1]]$celltype)
+  out <- out[, colnames(out) != "pDC", drop = FALSE]  
+  rownames(out) <- paste(n, rownames(out), sep = "_")  
+  out
+})
+
+epiclone_vs_celltype <- do.call(rbind, epiclone_vs_celltype)
+epiclone_vs_celltype <- epiclone_vs_celltype / rowSums(epiclone_vs_celltype)
+epiclone_vs_celltype_anno <- data.frame(row.names = rownames(epiclone_vs_celltype), 
+                                        patient = gsub("_.+", "", rownames(epiclone_vs_celltype)),
+                                        dominant = cluster2dominant[rownames(epiclone_vs_celltype)],
+                                        size = cluster2size[rownames(epiclone_vs_celltype)],
+                                        perc = cluster2perc[rownames(epiclone_vs_celltype)])
+
+plf <- data.frame(epiclone_vs_celltype_anno, epiclone_vs_celltype, clone = gsub(".+_", "", rownames(epiclone_vs_celltype_anno)))
+plf$dominant_plot <- factor(ifelse(plf$clone == "1", "non-expanded", ifelse(plf$dominant == "wt", "other expanded", plf$dominant)),
+                            levels = c(names(mutcolors),  "other expanded", "non-expanded"))
+plf <- plf[order(plf$dominant_plot, decreasing = T),]
+plf$patient <- factor(plf$patient, levels = patients)
+plf$expansion <- factor(ifelse(plf$clone == "1", "non-expanded", "expanded"), levels = c("non-expanded", "expanded"))
+plf$is.mutation <- factor(ifelse(plf$dominant == "wt", FALSE, TRUE))
+```
+
+```{r lineages_2}
+celltypes <- c("CD34.", "Erythroid", "Immature.B", "Monocyte", "NK.cells")
+
+non_expanded_means <- plf %>%
+  filter(expansion == "non-expanded") %>%
+  group_by(patient) %>%
+  dplyr::summarise(across(all_of(celltypes), ~ unique(.x), .names = "non_expanded_{col}"))  
+
+clone_fold_changes <- plf %>%
+  dplyr::left_join(non_expanded_means, by = "patient") %>%
+  dplyr::mutate(across(all_of(celltypes), 
+                       ~ .x / get(paste0("non_expanded_", cur_column())), 
+                       .names = "fold_change_{col}")) %>% 
+  dplyr::mutate(across(starts_with("fold_change_"), 
+                       ~ log2(.x), 
+                       .names = "log_{col}")) %>%  
+  filter(clone != 1)
+
+log_fold_columns <- names(clone_fold_changes)[starts_with("log_fold_change_", vars = names(clone_fold_changes))]
+
+for (col in log_fold_columns) {
+  clone_fold_changes[[col]][is.infinite(clone_fold_changes[[col]])] <- 
+    min(clone_fold_changes[[col]][is.finite(clone_fold_changes[[col]])], na.rm = TRUE) - 1
+}
+```
+
+
+```{r lineages_plot, fig.width = 15}
+clone_fold_changes_long <- clone_fold_changes %>%
+  pivot_longer(cols = starts_with("log_fold_change_"), 
+               names_to = "celltype", 
+               values_to = "log_fold_change", 
+               names_prefix = "log_fold_change_")
+
+custom_y_labels <- c(
+  "logFC CD34+ vs.\nnon-expanded clones",
+  "logFC Erythroid vs.\nnon-expanded clones",
+  "logFC Immature B vs.\nnon-expanded clones",
+  "logFC Monocyte vs.\nnon-expanded clones",
+  "logFC NK cells vs.\nnon-expanded clones"
+)
+names(custom_y_labels) <- celltypes 
+  
+clone_fold_changes_long <- clone_fold_changes_long %>%
+  mutate(y_label = custom_y_labels[celltype])
+
+p <- ggplot(clone_fold_changes_long, 
+            aes(x = patient, y = log_fold_change, size = size, color = dominant)) +
+  geom_point() +
+  facet_wrap(~ celltype, scales = "free_y", nrow = 1, strip.position = "left", labeller = as_labeller(custom_y_labels)) +
+  scale_y_continuous(
+    oob = scales::squish,
+    breaks = scales::breaks_extended(),
+    labels = function(x) {
+      x <- as.character(x)
+      x[which.min(as.numeric(x))] <- paste0("<", x[which.min(as.numeric(x))])
+      x
+    }
+  ) +
+  scale_size_continuous(
+    breaks = c(500, 1000, 1500),
+    labels = c("500", "1000", "1500"),
+    range = c(2, 8),
+    name = "Cells"
+  ) +
+    scale_color_manual(
+      name = "CHIP Clone",
+      values = mutcolors,
+      guide = "none"
+    ) +
+  xlab("") +
+  ylab("") +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.spacing.x = unit(0.02, "cm"),
+    plot.margin = margin(t = 10, r = 50, b = 10, l = 10),
+    aspect.ratio = 14 / 15,
+    strip.background = element_blank(),
+    strip.placement = "outside"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+print(p)
+```
