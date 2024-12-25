@@ -4,11 +4,12 @@ output: html_document
 date: "2024-12-21"
 ---
 
+This RMarkdown document generates Figures 5 and 6, focusing on the CD34+ compartment analysis in the EPI-Clone study. The analysis encompasses clonal analysis with EPI-Clone using the CHOIR method, and visualization of clonal dynamics in relation to patient age and lineage biases.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(cowplot)
-library(lme4)
 library(spatstat.explore)
 library(Seurat)
 source("../../scripts/EPIClone.R")
@@ -36,8 +37,11 @@ mutcolors <- c(
 ```
 
 ```{r readData}
+# corresponds to object on Figshare
 S <- readRDS("/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/cd34_seurat.rds")
-use_cpgs <- scan("../../infos/static_CpGs_human.csv", what = character())
+
+# Read the list of static consensus CpGs identified across patients
+use_cpgs <- scan("static_CpGs_human.csv", what = character())
 
 # we are only looking at patient data if there are more than 1000 cells
 patient.age <- S@meta.data %>%
@@ -50,13 +54,16 @@ patient.age <- patient.age %>% pull(age)
 names(patient.age) <- patients
 ```
 
-# scanorama umap (Fig 5B)
-Loads the integrated data set of donors cd34+ compartments in donors .. and donors ..
+## scanorama umap (Fig 5B)
+We integrated dynamic CpGs and surface proteins using Scanorama to identify cell types and differentiation states within the CD34+ compartment. This integration approach provided robust clustering across individuals despite interindividual differences.
+
 ```{r integrated_umap, fig.width=5}
 print(DimPlot(S, reduction = "umap", group.by = "celltype", cols = ctcolors) + ggtitle("") + NoAxes() + coord_fixed())
 ```
 
-# run EPI-Clone using CHOIR
+## run EPI-Clone using CHOIR
+Following the analytical strategy used in mouse data, we made several adjustments for the human cohort. We utilized a consensus set of 94 static CpGs, identified across at least five patients, to enhance EPI-Clone’s performance by providing a robust reference, thereby eliminating the need for individual static CpG identification in future studies. Additionally, we employed CHOIR with FDR adjustment to identify expanded clones, ensuring accurate detection of clonal expansions.
+
 ```{r execute_epiclone}
 epiclones <- mclapply(patients, function(patient) {
   seurat_subset <- subset(S, sample == patient)
@@ -80,7 +87,9 @@ epiclones <- mclapply(patients, function(patient) {
 names(epiclones) <- patients
 ```
 
-# B.5 CHIP clone (S13A)
+## B.5 CHIP clone (S13A)
+For patient B.5, we visualized CHIP clones using both mutation-based and CHOIR cluster-based UMAPs. The CH mutation was identified de novo.
+
 ```{r CHIP_clone}
 patient <- "B.5"
 
@@ -108,7 +117,9 @@ umap_clones <- DimPlot(
 umap_clones + umap_mutation
 ```
 
-# clonal size and CHIP clones (S13B)
+## clonal size and CHIP clones (S13B)
+This section provides insights into the impact of CHIP, highlighting the connection to clonal expansions.
+
 ```{r chip_clones, fig.width=4.5, fig.height=3, warning=FALSE, message=FALSE}
 forplot <- bind_rows(lapply(epiclones, function(x) {
   na.omit(data.frame(
@@ -172,7 +183,9 @@ print(plot)
 ```
 
 
-# relation between GMP ration and number of expanded clones (Fig 6B)
+## relation between GMP ration and number of expanded clones (Fig 6B)
+We assessed the relationship between GMP proportions and the number of expanded clones across patients. This analysis showcases how the proportion of GMP cells correlates with clonal expansions.
+
 ```{r gmp_ratio, fig.width=4, fig.height=3}
 gmp_list <- lapply(patients, function(patient) {
   s.obj <- epiclones[[patient]][[1]]
@@ -220,7 +233,9 @@ gmp_plot <- ggplot(gmp_df, aes(
 print(gmp_plot)
 ```
 
-# lineage biases expanded vs non expanded clones (S13 G)
+## lineage biases expanded vs non expanded clones (S13 G)
+To understand how specific mutations influence hematopoietic differentiation, we compared the distribution of different cell types within expanded (mutant) and non-expanded (wild-type) clones. This analysis reveals lineage-specific biases associated with clonal expansions.
+
 ```{r lineages_1}
 epiclone_vs_celltype <- lapply(patients, function(n) {
   epiclones[[n]][[1]]$simplecelltype <- epiclones[[n]][[1]]$celltype

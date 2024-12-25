@@ -4,13 +4,15 @@ output: html_document
 date: "2024-12-16"
 ---
 
+This RMarkdown document generates Figures 5 and 6, focusing on the Total Bone Marrow analysis in the EPI-Clone study. The analysis includes clonal analysis using EPI-Clone with the CHOIR method, and visualization of clonal dynamics in relation to patient age and lineage biases.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(cowplot)
-library(lme4)
 library(spatstat.explore)
 library(Seurat)
+library(parallel)
 source("../../scripts/EPIClone.R")
 
 ctcolors <- c(
@@ -44,20 +46,24 @@ mutcolors <- c(
 ```
 
 ```{r readData}
+# corresponds to object on Figshare
 S <- readRDS("/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/tbm_seurat.rds")
-use_cpgs <- scan("../../infos/static_CpGs_human.csv", what = character())
+
+# Read the list of static consensus CpGs identified across patients
+use_cpgs <- scan("static_CpGs_human.csv", what = character())
 
 patient.age <- S@meta.data %>%
   distinct(sample, age) %>%               
-  arrange(age)                           
+  arrange(age)
 
 patients <- patient.age$sample            
 patient.age <- patient.age$age           
 names(patient.age) <- patients   
 ```
 
-# scanorama, methylome and protein based integration umap (Fig 5B, S12C)
-Loads the integrated data set of donors A.1-A.7
+## scanorama, methylome and protein based integration umap (Fig 5B, S12C)
+Data integration across all CpGs in the human dataset did not effectively remove interindividual differences, as large CH clones remained distinct. To address this, three integration approaches were employed: CITE-seq data alone, dynamic CpG data alone, and a combination of both modalities using Scanorama. Including both CITE-seq and dynamic CpGs resulted in more consistent clustering across patients and reduced susceptibility to technical variation, as illustrated in Figure S12c.
+
 ```{r integrated_umap, fig.width=15}
 p1 <- DimPlot(S, reduction = "umap", group.by = "celltype", cols = ctcolors) + ggtitle("scanorama") + NoAxes() + coord_fixed() + NoLegend()
 p2 <- DimPlot(S, reduction = "umapmeth", group.by = "celltype", cols = ctcolors) + ggtitle("methylation") + NoAxes() + coord_fixed() + NoLegend()
@@ -66,13 +72,16 @@ p3 <- DimPlot(S, reduction = "umapprot", group.by = "celltype", cols = ctcolors)
 print(p1 + p2 + p3)
 ```
 
-# run EPI-Clone using CHOIR
+## run EPI-Clone using CHOIR
+Following the strategy used in mouse data, several adjustments were made to optimize the EPI-Clone analysis for the human cohort. Mature T and B cells were excluded from the analysis to focus on relevant cell populations. A consensus set of 94 static CpGs, identified as static in at least five patients, was utilized to enhance the performance of EPI-Clone by providing a robust reference, thereby eliminating the need for individual static CpG identification in future studies. Additionally, CHOIR with FDR adjustment was employed to identify expanded clones, ensuring accurate detection of clonal expansions.
+
 ```{r execute_epiclone}
 epiclones <- mclapply(patients, function(patient) {
 
   seurat_subset <- subset(S, sample == patient)
   seurat_subset <- subset(seurat_subset, celltype %in% c("Monocyte", "Erythroid", "CD34+", "pDC", "Immature B", "NK cells"))
 
+  # Execute the EPI-Clone function with specified parameters
   out <- epiclone(
     seurat_subset,
     trueClone = NULL, batch = "sample", celltype = "celltype", performance.field = "NonHhaI",
@@ -88,9 +97,13 @@ epiclones <- mclapply(patients, function(patient) {
 
   return(out)
 }, mc.cores = 7, mc.allow.recursive = TRUE)
+
+names(epiclones) <- patients
 ```
 
-# clonal UMAPs (Fig 5C,D)
+## clonal UMAPs (Fig 5C,D)
+Mutation-based and CHOIR cluster-based UMAP plots are generated, with CHIP clones serving as ground truth to validate EPI-clone’s performance. This approach effectively identified CHIP clones and highlighted expanded versus non-expanded clones.
+
 ```{r clonal_umaps, fig.width=15}
 plots <- lapply(patients, function(patient)
   DimPlot(epiclones[[patient]][[1]], reduction = "cloneUMAP", group.by = "mutation", order = rev(names(mutcolors))) + 
@@ -118,7 +131,9 @@ umaps_mutations / umaps_clones
 ```
 
 
-# clonal size and CHIP clones (Fig 5E)
+## clonal size and CHIP clones (Fig 5E)
+This section provides insights into the impact of CHIP, highlighting the connection to clonal expansions.
+
 ```{r chip_clones, fig.width=4.5, fig.height=3, warning=FALSE, message=FALSE}
 forplot <- bind_rows(lapply(epiclones, function(x) {
   na.omit(data.frame(
@@ -179,7 +194,9 @@ plot <- qplot(
 print(plot)
 ```
 
-# Expansion of clones in age (Fig 6A)
+## Expansion of clones in age (Fig 6A)
+This analysis visualizes the correlation between patient age and the number of expanded clones, with clone size represented by the number of cells, thereby highlighting potential age-related trends in clonal hematopoiesis.
+
 ```{r expansion, fig.width=4, fig.height=3}
 age_thing <- data.frame(
   patient = names(epiclones),
@@ -192,8 +209,10 @@ qplot(x = age, y = CHOIR.nclones, data =age_thing, label = patient, size = ncell
   scale_size_area(name = "# cells", max_size = 4) 
 ```
 
-# lineage biases expanded vs non expanded clones (Fig 6D, S13 F)
-```{r lineages_1}
+## lineage biases expanded vs non expanded clones (Fig 6D, S13F)
+Visualizing the log2 fold changes of cell type proportions in expanded clones compared to non-expanded clones elucidates lineage-specific biases associated with clonal expansions.
+
+```{r data_processing}
 epiclone_vs_celltype <- lapply(patients, function(n) {
   epiclones[[n]][[1]]$simplecelltype <- epiclones[[n]][[1]]$celltype
   out <- table(epiclones[[n]][[1]]$CHOIR_clusters_0.05, epiclones[[n]][[1]]$celltype)
@@ -219,7 +238,7 @@ plf$expansion <- factor(ifelse(plf$clone == "1", "non-expanded", "expanded"), le
 plf$is.mutation <- factor(ifelse(plf$dominant == "wt", FALSE, TRUE))
 ```
 
-```{r lineages_2}
+```{r fold_change_calc}
 celltypes <- c("CD34.", "Erythroid", "Immature.B", "Monocyte", "NK.cells")
 
 non_expanded_means <- plf %>%
