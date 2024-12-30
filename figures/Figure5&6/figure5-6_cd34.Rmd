@@ -1,0 +1,353 @@
+---
+title: "EPI-Clone Figure 5,6 - CD34+ Compartment"
+output: html_document
+date: "2024-12-21"
+---
+
+This RMarkdown document generates Figures 5 and 6, focusing on the CD34+ compartment analysis in the EPI-Clone study. The analysis encompasses clonal analysis with EPI-Clone using the CHOIR method, and visualization of clonal dynamics in relation to patient age and lineage biases.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cowplot)
+library(spatstat.explore)
+library(Seurat)
+source("../../scripts/EPIClone.R")
+
+ctcolors <- c("EMPP.MEP" = "#D36494", 
+              "GMP" = "#508C46", 
+              "HSC.MPP" = "maroon4",  
+              "MkP"= "blue2")
+
+mutcolors <- c(
+  "N/A" = "grey30",
+  "wt" = "grey70",
+  "ASXL1 Q592X" = "firebrick",
+  "LoY" = "blue",
+  "DNMT3A R659H" = "coral3",
+  "PPM1D R552X" = "firebrick3",
+  "PPM1D W427Gfs" = "deeppink",
+  "DNMT3A I780T" = "firebrick4",
+  "DNMT3A Q606X" = "deeppink3",
+  "DNMT3A I310T" = "coral1",
+  "DNMT3A W440X" = "deeppink4",
+  "DNMT3A C666Y" = "orange2",
+  "DNMT3A R729L" = "tomato2"
+)
+```
+
+```{r readData}
+# corresponds to object on Figshare
+S <- readRDS("/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/cd34_seurat.rds")
+
+# Read the list of static consensus CpGs identified across patients
+use_cpgs <- scan("static_CpGs_human.csv", what = character())
+
+# we are only looking at patient data if there are more than 1000 cells
+patient.age <- S@meta.data %>%
+  distinct(sample, age) %>%
+  filter(sample %in% names(table(S$sample)[table(S$sample) > 1000])) %>%
+  arrange(age)
+
+patients <- patient.age %>% pull(sample)
+patient.age <- patient.age %>% pull(age)
+names(patient.age) <- patients
+```
+
+## scanorama umap (Fig 5B)
+We integrated dynamic CpGs and surface proteins using Scanorama to identify cell types and differentiation states within the CD34+ compartment. This integration approach provided robust clustering across individuals despite interindividual differences.
+
+```{r integrated_umap, fig.width=5}
+print(DimPlot(S, reduction = "umap", group.by = "celltype", cols = ctcolors) + ggtitle("") + NoAxes() + coord_fixed())
+```
+
+## run EPI-Clone using CHOIR
+Following the analytical strategy used in mouse data, we made several adjustments for the human cohort. We utilized a consensus set of 94 static CpGs, identified across at least five patients, to enhance EPI-Clone’s performance by providing a robust reference, thereby eliminating the need for individual static CpG identification in future studies. Additionally, we employed CHOIR with FDR adjustment to identify expanded clones, ensuring accurate detection of clonal expansions.
+
+```{r execute_epiclone}
+epiclones <- mclapply(patients, function(patient) {
+  seurat_subset <- subset(S, sample == patient)
+
+  out <- epiclone(
+    seurat_subset,
+    trueClone = NULL, batch = "sample", celltype = "celltype", performance.field = "NonHhaI",
+    lower.thr.methrate = 0.05, upper.thr.methrate = 0.95, k.bigCloneSelection = 50,
+    returnIntermediateSeurat = TRUE, npcs.bigCloneSelection = 30, selected.CpGs = use_cpgs,
+    res.Clustering = 2, bigclone.method = "CHOIR", runCHOIR = TRUE
+  )
+
+  out[[1]] <- RunTSNE(
+    out[[1]], reduction = "clonePCA", dims = 1:30,
+    reduction.name = "cloneTSNE", reduction.key = "CLONETSNE_"
+  )
+
+  return(out)
+}, mc.cores = 7, mc.allow.recursive = TRUE)
+
+names(epiclones) <- patients
+```
+
+## B.5 CHIP clone (S13A)
+For patient B.5, we visualized CHIP clones using both mutation-based and CHOIR cluster-based UMAPs. The CH mutation was identified de novo.
+
+```{r CHIP_clone}
+patient <- "B.5"
+
+umap_mutation <- DimPlot(epiclones[[patient]][[1]], 
+                         reduction = "cloneUMAP", 
+                         group.by = "mutation", 
+                         order = rev(names(mutcolors))) + 
+  NoAxes() + 
+  coord_fixed() + 
+  NoLegend() + 
+  ggtitle(patient) + 
+  scale_color_manual(values = mutcolors, na.value = "grey80")
+
+umap_clones <- DimPlot(
+  epiclones[[patient]][[1]], 
+  reduction = "cloneUMAP", 
+  group.by = "CHOIR_clusters_0.05") + 
+  NoAxes() + 
+  coord_fixed() + 
+  NoLegend() + 
+  ggtitle("EPI Clones") + 
+  scale_color_manual(values = c("1" = NA, "2" = "#F8766D"))
+
+
+umap_clones + umap_mutation
+```
+
+## clonal size and CHIP clones (S13B)
+This section provides insights into the impact of CHIP, highlighting the connection to clonal expansions.
+
+```{r chip_clones, fig.width=4.5, fig.height=3, warning=FALSE, message=FALSE}
+forplot <- bind_rows(lapply(epiclones, function(x) {
+  na.omit(data.frame(
+    mut = x[[1]]$mutation,
+    CHOIR = x[[1]]$CHOIR_clusters_0.05,
+    celltype = x[[1]]$celltype,
+    patient = unique(x[[1]]$sample)
+  ))
+}))
+
+patient_totals <- forplot %>%
+  group_by(patient) %>%
+  dplyr::summarise(total_patient_size = n(), .groups = "drop")
+
+forplot <- forplot %>%
+  mutate(mut = if_else(mut == "N/A", NA_character_, mut)) %>%
+  group_by(patient, CHOIR) %>%
+  dplyr::summarise(
+    size = n(),
+    perc.wt = mean(mut == "wt", na.rm = TRUE),
+    dominant = if (any(!is.na(mut))) names(which.max(table(mut))) else "wt",
+    .groups = "drop"
+  ) %>%
+  left_join(patient_totals, by = "patient") %>%
+  mutate(perc = size / total_patient_size)
+
+forplot$key <- with(forplot, paste(patient, CHOIR,sep= "_"))
+cluster2dominant <- forplot$dominant; names(cluster2dominant) <- forplot$key
+cluster2size <- forplot$size; names(cluster2size) <- forplot$key
+cluster2perc <- forplot$perc; names(cluster2perc) <- forplot$key
+
+
+chip_patients <- c("A.3", "A.4", "B.5")
+to_plot <- forplot %>% filter(patient %in% chip_patients) %>%
+  dplyr::mutate(key = fct_reorder(key, perc))
+
+plot <- qplot(
+  x = key,
+  size = 100 * perc,
+  y = 100 * (1 - perc.wt),
+  data = subset(to_plot, CHOIR != "1"),
+  color = dominant
+) +
+  facet_grid(~patient, space = "free_x", scales = "free_x") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"  # Position the legend at the bottom
+  ) +
+  ylab("% mutant") +
+  xlab("EPI-clone, by size") +
+  scale_color_manual(values = mutcolors, guide = "none") +
+  scale_size_area(
+    name = "Clone size (%)",
+    max_size = 4,
+    breaks = c(10, 20)  
+  )
+
+print(plot)
+```
+
+
+## relation between GMP ration and number of expanded clones (Fig 6B)
+We assessed the relationship between GMP proportions and the number of expanded clones across patients. This analysis showcases how the proportion of GMP cells correlates with clonal expansions.
+
+```{r gmp_ratio, fig.width=4, fig.height=3}
+gmp_list <- lapply(patients, function(patient) {
+  s.obj <- epiclones[[patient]][[1]]
+  ct <- s.obj@meta.data$celltype
+  gmp_df <- table(ct) %>% as.data.frame() %>% filter(ct == "GMP")  
+  proportion <- gmp_df$Freq / sum(table(ct))
+  age <- patient.age[[patient]]
+  CHOIR.nclones <- length(unique(s.obj$CHOIR_clusters_0.05)) - 1
+  ncells <- ncol(s.obj)
+  data.frame(sample = patient, proportion, age, CHOIR.nclones, ncells)
+})
+
+gmp_df <- bind_rows(gmp_list)
+
+gmp_df <- gmp_df %>%
+  mutate(
+    GMP_proportion = pmin(pmax(proportion, 0.0001), 0.9999),  
+    GMP_logit = qlogis(GMP_proportion)                        
+  )
+
+gmp_plot <- ggplot(gmp_df, aes(
+  x = GMP_proportion * 100, 
+  y = CHOIR.nclones, 
+  label = sample, 
+  size = ncells, 
+  color = age
+)) +
+  geom_point() +
+  ggrepel::geom_text_repel(size = 3) +
+  scale_color_viridis_c(
+    name = "Age",
+    option = "magma",
+    direction = -1,
+    begin = 0,
+    end = 0.9
+  ) +
+  scale_size_area(name = "# cells", max_size = 4) +
+  xlab("GMP (%)") +
+  ylab("Expanded clones") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+  ) 
+
+print(gmp_plot)
+```
+
+## lineage biases expanded vs non expanded clones (S13 G)
+To understand how specific mutations influence hematopoietic differentiation, we compared the distribution of different cell types within expanded (mutant) and non-expanded (wild-type) clones. This analysis reveals lineage-specific biases associated with clonal expansions.
+
+```{r lineages_1}
+epiclone_vs_celltype <- lapply(patients, function(n) {
+  epiclones[[n]][[1]]$simplecelltype <- epiclones[[n]][[1]]$celltype
+  out <- table(epiclones[[n]][[1]]$CHOIR_clusters_0.05, epiclones[[n]][[1]]$celltype)
+  out <- out[, colnames(out) != "pDC", drop = FALSE]  
+  rownames(out) <- paste(n, rownames(out), sep = "_")  
+  out
+})
+
+epiclone_vs_celltype <- do.call(rbind, epiclone_vs_celltype)
+epiclone_vs_celltype <- epiclone_vs_celltype / rowSums(epiclone_vs_celltype)
+epiclone_vs_celltype_anno <- data.frame(row.names = rownames(epiclone_vs_celltype), 
+                                        patient = gsub("_.+", "", rownames(epiclone_vs_celltype)),
+                                        dominant = cluster2dominant[rownames(epiclone_vs_celltype)],
+                                        size = cluster2size[rownames(epiclone_vs_celltype)],
+                                        perc = cluster2perc[rownames(epiclone_vs_celltype)])
+
+plf <- data.frame(epiclone_vs_celltype_anno, epiclone_vs_celltype, clone = gsub(".+_", "", rownames(epiclone_vs_celltype_anno)))
+plf$dominant_plot <- factor(ifelse(plf$clone == "1", "non-expanded", ifelse(plf$dominant == "wt", "other expanded", plf$dominant)),
+                            levels = c(names(mutcolors),  "other expanded", "non-expanded"))
+plf <- plf[order(plf$dominant_plot, decreasing = T),]
+plf$patient <- factor(plf$patient, levels = patients)
+plf$expansion <- factor(ifelse(plf$clone == "1", "non-expanded", "expanded"), levels = c("non-expanded", "expanded"))
+plf$is.mutation <- factor(ifelse(plf$dominant == "wt", FALSE, TRUE))
+```
+
+```{r lineages_2}
+celltypes <- unique(S$celltype)
+
+non_expanded_means <- plf %>%
+  filter(expansion == "non-expanded") %>%
+  group_by(patient) %>%
+  dplyr::summarise(across(all_of(celltypes), ~ unique(.x), .names = "non_expanded_{col}"))  
+
+clone_fold_changes <- plf %>%
+  dplyr::left_join(non_expanded_means, by = "patient") %>%
+  dplyr::mutate(across(all_of(celltypes), 
+                       ~ .x / get(paste0("non_expanded_", cur_column())), 
+                       .names = "fold_change_{col}")) %>% 
+  dplyr::mutate(across(starts_with("fold_change_"), 
+                       ~ log2(.x), 
+                       .names = "log_{col}")) %>%  
+  filter(clone != 1)
+
+log_fold_columns <- names(clone_fold_changes)[starts_with("log_fold_change_", vars = names(clone_fold_changes))]
+
+for (col in log_fold_columns) {
+  clone_fold_changes[[col]][is.infinite(clone_fold_changes[[col]])] <- 
+    min(clone_fold_changes[[col]][is.finite(clone_fold_changes[[col]])], na.rm = TRUE) - 1
+}
+```
+
+
+```{r lineages_plot, fig.width = 15}
+clone_fold_changes_long <- clone_fold_changes %>%
+  pivot_longer(cols = starts_with("log_fold_change_"), 
+               names_to = "celltype", 
+               values_to = "log_fold_change", 
+               names_prefix = "log_fold_change_")
+
+custom_y_labels <- c(
+  "logFC EMPP/MEP vs.\nnon-expanded clones",
+  "logFC GMP vs.\nnon-expanded clones",
+  "logFC HSC/MPP B vs.\nnon-expanded clones",
+  "logFC MkP vs.\nnon-expanded clones"
+)
+
+names(custom_y_labels) <- celltypes 
+  
+clone_fold_changes_long <- clone_fold_changes_long %>%
+  mutate(y_label = custom_y_labels[celltype])
+
+p <- ggplot(clone_fold_changes_long, 
+            aes(x = patient, y = log_fold_change, size = size, color = dominant)) +
+  geom_point() +
+  facet_wrap(~ celltype, scales = "free_y", nrow = 1, strip.position = "left", labeller = as_labeller(custom_y_labels)) +
+  scale_y_continuous(
+    oob = scales::squish,
+    breaks = scales::breaks_extended(),
+    labels = function(x) {
+      x <- as.character(x)
+      x[which.min(as.numeric(x))] <- paste0("<", x[which.min(as.numeric(x))])
+      x
+    }
+  ) +
+  scale_size_continuous(
+    breaks = c(500, 1000, 1500),
+    labels = c("500", "1000", "1500"),
+    range = c(2, 8),
+    name = "Cells"
+  ) +
+    scale_color_manual(
+      name = "CHIP Clone",
+      values = mutcolors,
+      guide = "none"
+    ) +
+  xlab("") +
+  ylab("") +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.spacing.x = unit(0.02, "cm"),
+    plot.margin = margin(t = 10, r = 50, b = 10, l = 10),
+    aspect.ratio = 14 / 15,
+    strip.background = element_blank(),
+    strip.placement = "outside"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+print(p)
+```
+
+

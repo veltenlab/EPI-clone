@@ -1,0 +1,262 @@
+---
+title: "EPI-Clone Figure 3"
+author: "Michael Scherer & Lars Velten"
+date: "18/12/2024"
+output: html_document
+---
+
+## Experimental design
+
+This vignette describes how to generate the plots for Figure 3 of the EPI-Clone manuscript. We show how EPI-clone can cluster cells by clona identity without requiring genetic barcoding (such as LARRY).
+
+![Figure 1: Experimental design for EPi-Clone. A shows how LARRY barcodes were introduced into HSCs and transplanted into four recipient mice analyzed here. B gives an overview of EPI-Clone.](exp_overview_Fig3.png)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+plot_theme_legend <- theme(panel.background = element_rect(color='black',fill='white'),
+                          panel.grid=element_blank(),
+                          text=element_text(color='black',size=8),
+                          axis.text=element_text(color='black',size=8),
+                          axis.ticks=element_line(color='black', size=.1),
+                          strip.background = element_blank(),
+                          legend.key=element_rect(color='black', fill=NA),
+                          legend.key.size = unit(2, 'mm'),
+                          strip.text = element_text(color='black',size=8))
+plot_theme <- theme(panel.background = element_rect(color='black',fill='white'),
+                          panel.grid=element_blank(),
+                          text=element_text(color='black',size=8),
+                          axis.text=element_text(color='black',size=8),
+                          axis.ticks=element_line(color='black', size=.1),
+                          strip.background = element_blank(),
+                          legend.position = 'none',
+                          strip.text = element_text(color='black',size=8))
+cols_chrom <- c('active/weak promoter'='#ff678c',
+          'Enhancer'='#ffdc64',
+          'transcription'='#008c64',
+          'Heterochromatin'='#6e1e8c',
+          'weak enhancer'='#ffff00',
+          'H3K9me3-repressed'='#787878',
+          'Other'='#aaaaaa',
+          'H3K9me3-repressed'='#f0f0f0')
+celltypeColors <- c("HSC/MPP1"="maroon4",
+                    "MPP2" ="darkgrey",
+                    "MPP3" = "darkblue",
+                    "MPP4" = "darkgreen",
+                    "MEP"="#D5392C",
+                    "EryP" = "#ED7950",
+                    "MkP 1" = "#BDA8CB",
+                    "MkP 2" = "#D36494",
+                    "GMP" = "#C3C380",
+                    "pre/pro-B" ="#94B1F9")
+source('../../scripts/helper_functions.R')
+source('../..//scripts/EPIClone.R')
+```
+
+This vignette introduces the EPI-Clone algorithm in detail. The convenient wrapper function  `epiclone` is described in the main readme of the github repo.
+
+## Unsupervised uMAP (Figure 1b,c)
+
+First we load the data and perform an unsupervised dimensionality reduction of all CpGs.
+
+```{r readData, warning=F, message=F}
+require(Seurat)
+require(ggplot2)
+require(ROCR)
+require(fossil)
+require(reshape2)
+require(pheatmap)
+require(GenomicRanges)
+full_seurat <- readRDS(url('https://figshare.com/ndownloader/files/42479346'))
+larry <- subset(full_seurat, Experiment == "LARRY main experiment")
+```
+
+We perform straightforward Seurat dimensionality reduction.
+
+```{r full_seurat, message=FALSE, warning=FALSE}
+usecpg <- rownames(larry)
+larry <- ScaleData(larry, assay = "DNAm", features = usecpg, verbose = F)
+larry <- RunPCA(larry, assay = "DNAm", features = usecpg, reduction.name = "pca", reduction.key = "PC_", npcs = 100, verbose = F)
+larry <- RunUMAP(larry, reduction = "pca", dims = 1:50, verbose = F)
+CpGSelection <- read.csv('../../infos/cpg_selection.csv', row.names = 1)
+selected_not_protein <- row.names(subset(CpGSelection, subset=Type=='Static'))
+```
+
+
+```{r setupcolors, echo = F}
+bigClone.relSize <- 0.0025
+cloneorder <- table(larry$LARRY)
+bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > bigClone.relSize]
+
+cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
+cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
+names(cloneColors.here) <- cloneorder
+cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
+```
+
+## Identification of big clones vs. small clones (Figure 2i-j)
+
+We perform dimensionality reduction on these CpGs only. Then we look for points in low-density regions (i.e. points which are far away from their nearest neighbors). There are a few parameters here:
+
+* `npcs.bigCloneSelection`: The number of PCs used here. Since the epimutation space appears to be random (there are no "correlated CpGs"), this number should be close to the number of CpGs included.
+
+* `k.bigCloneSelection` The number of nearest neighbors considered for computing the average distance to nearest neighbors. A small number, since we are looking for points in sparse areas
+
+* `thr.bigCloneSelection` Threshold to use. The lower the threshold, the more stringent the selection for big clones will be. This will become clearer below.
+
+The first step is to find the nearest neighbors and compute the distance:
+
+
+```{r epiclone_p2a, warning=FALSE,message=FALSE}
+npcs.bigCloneSelection <- 100
+k.bigCloneSelection <- 5
+thr.bigCloneSelection <- 0
+
+larry <- ScaleData(larry, assay = "DNAm", features = selected_not_protein, verbose = F)
+larry <- RunPCA(larry, assay = "DNAm", features = selected_not_protein, reduction.name = "clonePCA", reduction.key = "CLONEPC_", npcs = 100, verbose = F)
+larry <- RunUMAP(larry,reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, reduction.name = "cloneUMAP", reduction.key = "CLONEUMAP_" , verbose = F)
+larry <- FindNeighbors(larry, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = k.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" , verbose = F)
+larry$avgNNdist <- apply(larry@neighbors$clone.neighbors@nn.dist,1,function(x) mean(x[x>0]))
+```
+
+This distance estimate seems to be impacted by technical covariates, which we regress out:
+
+```{r epiclone_p2b}
+to.summarise <- larry@meta.data[, c("ProcessingBatch" ,"CellType","avgNNdist","nFeature_DNAm", "PerformanceNonHhaI")]
+m <- lm(avgNNdist ~ nFeature_DNAm + ProcessingBatch + CellType, data = to.summarise)
+larry$avgNNres <- residuals(m)
+```
+
+Then there is an optional step, which is to smoothen the resulting estimate locally across a larger group of neighbors. This massively improved performance (from AUPRC ~0.3 to ~0.63)
+
+
+```{r epiclone_p2c, message=F,warning=F}
+smoothen.bigCloneSelection <- 20
+larry <- FindNeighbors(larry, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = smoothen.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" )
+larry$avgNNres <- apply(larry@neighbors$clone.neighbors@nn.idx,1, function(x) mean(larry$avgNNres[x]))
+
+larry$selected <- larry$avgNNres < thr.bigCloneSelection
+```
+
+We can plot this quantity against clone size. The point clound on the left are cells with no larry barcode (see above, some of them are from expanded clones and have dropouts). The red line is the threshold used for selection; thisd plot can help defining an appropriate threshold, if clone size information is available. 
+
+```{r epiclone_plt2a, echo=FALSE, fig.width=5, fig.height=4}
+
+to.summarise$avgNNres <- larry$avgNNres
+    
+      to.summarise$cleanClone <- larry$LARRY
+      csize <- table(to.summarise$cleanClone)
+      larry$csize <- csize[as.character(larry$LARRY)] -> to.summarise$csize
+      to.summarise$csize[is.na(to.summarise$csize)] <- 0
+ggplot(aes(x = csize+1, y = avgNNres), data = to.summarise) + scale_x_log10() + geom_point(position = position_jitter(width=0.1),size=.5) + ylab("Distance to nearest neighbors") + xlab("LARRY clone size") + geom_hline(yintercept = thr.bigCloneSelection, color = "red") + scale_x_log10(breaks = c(1,10,100,1000), labels = c("NA",10,100,1000))
+    
+```
+If no clone size information is available, we recommend checking the density estimate on a uMAP and choosing a threshold that selects the big clusters, but not the cells interspersed between cluster.
+
+We can now recreate the plots from figure 1e,f, which visually demonstrate that cells from big clones are correctly selected. Again, we're only showing the cells that have a LARRY barcode (dropout follows similar distribution). In the first plot, grey dots are from clones with a relative clone sizes less than 0.25%.
+
+```{r peiclone_plt2b, echo=F, fig.width=4, fig.height=4.2}
+cloneorder <- table(larry$LARRY)
+bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > bigClone.relSize]
+cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
+
+cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
+names(cloneColors.here) <- cloneorder
+cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
+
+larry$RelSize <- larry$csize/sum(table(larry$LARRY))
+larry$use <- !is.na(larry$LARRY)
+larry$isBigClone <- larry$LARRY %in% bigclones
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "LARRY") + NoLegend() + scale_color_manual(values = cloneColors.here) + NoAxes()+ ggtitle('')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "CellType") + NoLegend() + scale_color_manual(values = celltypeColors) + NoAxes()+ ggtitle('')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "selected") + NoLegend() + NoAxes() + scale_color_manual(values = c("TRUE" = "#AA0000", "FALSE" = "#555555")) + ggtitle('')
+```
+
+### Computation of ROC curves
+
+If LARRY information is available, we can compute ROC curves
+
+```{r roc, fig.width=4, fig.height=4}
+trueClone <- "LARRY"
+true_clone <- larry@meta.data[,trueClone]
+larry$true_big_clone <-  larry$csize/sum(table(larry$LARRY)) > bigClone.relSize
+forAUC <-data.frame( true_small_clones =  larry$csize/sum(table(larry$LARRY)) <=  bigClone.relSize, 
+                     predictor = larry$avgNNres)
+forAUC <- na.omit(forAUC)
+predictions <- prediction( forAUC$predictor, forAUC$true_small_clones)
+perf <- performance(predictions, measure = "tpr", x.measure = "fpr" )
+
+plot(perf)
+abline(0,1)
+
+
+auc <- performance(predictions, measure = "auc")
+
+```
+
+Here results in an AUC `r sprintf("%.3f",auc@y.values[[1]])`.
+
+
+## Clustering of big clones only (Figure 1h)
+
+Mostly the clustering shown in the uMAP above is of good quality, but the cells from small clusters often falsely get assigned to some cluster. We therefore prefer to select only the big clones, and re-cluster. Again, this step has a couple of parameters
+
+* `npcs.Clustering` the number of PCs used. Again, should be close to the number of CpGs
+
+* `k.Clustering` Number of nearest neighbors. A bigger value than before, as we're now looking at big clones
+
+* `res.Clustering` Resolution of the clustering. Pretty high, unless there are very few big clones...
+
+```{r epiclone_pt3a, message=F, warning=F}
+npcs.Clustering = 100
+k.Clustering = 25
+res.Clustering=3
+
+for_clustering <- subset(larry, selected)
+    for_clustering <- ScaleData(for_clustering, assay = "DNAm", features = selected_not_protein, verbose=F)
+    for_clustering <- RunPCA(for_clustering, assay = "DNAm", features = selected_not_protein, reduction.name = "clonePCA", reduction.key = "CLONEPC_", npcs = 100, verbose=F)
+    for_clustering <- RunUMAP(for_clustering,reduction = "clonePCA", dims = 1:npcs.Clustering, reduction.name = "cloneUMAP", reduction.key = "CLONEUMAP_" , verbose=F)
+    
+    for_clustering <- FindNeighbors(for_clustering,reduction = "clonePCA", dims = 1:npcs.Clustering, k.param =k.Clustering, graph.name = "clone_nn", verbose=F)
+    for_clustering <- FindClusters(for_clustering, resolution=res.Clustering, graph.name = "clone_nn", verbose=F)
+```
+
+We can now plot the clustering result and the ground truth clonal labels side by side. In gray are now cells without a LARRY barcode (dropouts that are part of big clones).
+
+```{r clusterresult, echo=F, fig.width=4,fig.height=4.2}
+
+DimPlot(for_clustering, reduction="cloneUMAP", label =T)  + NoLegend() + ggtitle("Clustering") +NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "LARRY")  + NoLegend() + NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "CellType")  + NoLegend() + NoAxes()
+```
+
+The Adjusted Rand index is `r sprintf("%.3f", adj.rand.index(as.integer(as.factor(Idents(for_clustering))), as.integer(as.factor(for_clustering@meta.data[,trueClone]))))`.
+
+We can also plot the overlap as a heatmap:
+
+```{r heatmap, echo=F, fig.width=6,fig.height=4}
+cloneSizes <- table(for_clustering@meta.data[,trueClone])
+new_clust <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]]/sum(cloneSizes) <= 0.0025, "small clone", for_clustering@meta.data[,trueClone]))
+names(new_clust) <- Cells(for_clustering)
+for_clustering$CloneForRiver <- new_clust
+
+forriver <- data.frame(LARRY = factor(for_clustering$CloneForRiver), unsuper = Idents(for_clustering))
+forriver <- acast(LARRY ~unsuper, data= forriver,fun.aggregate = length)
+
+
+forriver <- forriver[rownames( forriver) != "NA",]
+forriver_norm <- t(t(forriver) / colSums(forriver))
+dist.col <- as.dist(1-cor(forriver_norm))
+dist.row <- as.dist(1-cor(t(forriver_norm)))
+
+maxis <- apply(forriver_norm[!rownames(forriver_norm) %in% c("NA","small clone"),],2,max)
+rownames(forriver_norm)[!rownames(forriver_norm) %in% c("NA","small clone")] <- ""
+
+
+pheatmap(forriver_norm[,order(maxis)],cluster_cols = F,fontsize_col=6,clustering_distance_rows = dist(forriver_norm[,order(maxis)]),
+         color = colorRampPalette(c("white","blue","purple","red"))(100))
+```
+
+
+Careful with cluster 4 - a big cluster mostly containing cells from small clones and NA! Likely this is a cluster of cells that falsely passed the original selection of "expanded clones"! We excluded it from the analyses in figure 2f+g.
+
