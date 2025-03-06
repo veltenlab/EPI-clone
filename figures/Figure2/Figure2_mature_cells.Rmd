@@ -9,7 +9,7 @@ author: "Michael Scherer & Lars Velten"
 
 This vignette the second part of Figure 3, in which we employed EPI-clone on barcoded, mature immune cells from spleen and bone marrow (experiment M.5).
 
-![Figure 1: Experimental design for EPi-Clone. A shows how LARRY barcodes were introduced into HSCs and transplanted into four recipient mice analyzed here. B gives an overview of EPI-Clone.](exp_overview_Fig3_mature.png)
+![Figure 1: Experimental design for EPi-Clone. A shows how LARRY barcodes were introduced into HSCs and transplanted into four recipient mice analyzed here. B gives an overview of EPI-Clone.](exp_overview_Fig2_mature.png)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -102,10 +102,12 @@ epiclone_obj <- epiclone(seurat_obj, plotFolder = '.', tuneParams = F, res.Clust
 ```{r visualize_results}
 epiclone_seurat <- epiclone_obj$finalSeurat
 DimPlot(epiclone_seurat, reduction = 'cloneUMAP', group.by = c('LARRY'))+NoLegend()+NoAxes()+ggtitle('')
+write.csv(data.frame(epiclone_seurat@reductions$cloneUMAP@cell.embeddings, LARRY=epiclone_seurat$LARRY), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2H.csv')
 ```
 
 ```{r epiclone_cell_state}
 DimPlot(epiclone_seurat, reduction = 'cloneUMAP', group.by = 'CellType')+scale_color_manual(values=celltypeColors)
+write.csv(data.frame(epiclone_seurat@reductions$cloneUMAP@cell.embeddings, LARRY=epiclone_seurat$LARRY), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2I.csv')
 ```
 
 ```{r performance_per_cluster}
@@ -113,6 +115,8 @@ adj_rand <- sapply(unique(epiclone_seurat$CellType), function(ct){
   adj.rand.index(as.integer(as.factor(epiclone_seurat$LARRY))[epiclone_seurat$CellType==ct], as.integer(as.factor(Idents(epiclone_seurat)))[epiclone_seurat$CellType==ct])
 })
 to_plot <- data.frame(CellType=unique(epiclone_seurat$CellType), AdjRand=adj_rand)
+write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2J.csv')
+
 ggplot(to_plot, aes(x=CellType, y=AdjRand, fill=CellType))+geom_histogram(stat='identity')+plot_theme+
   theme(axis.text.x = element_text(angle=45, hjust=1))+scale_fill_manual(values=celltypeColors)
 ```

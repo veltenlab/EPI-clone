@@ -1,5 +1,5 @@
 ---
-title: "EPI-Clone"
+title: "EPI-Clone Figure 2"
 author: "Michael Scherer & Lars Velten"
 date: "18/12/2024"
 output: html_document
@@ -7,10 +7,9 @@ output: html_document
 
 ## Experimental design
 
-This vignette describes how to generate the plots for Figure 2 of the EPI-Clone manuscript. Specifically, it shows how experiment
-M.1: LARRY main experiment reveals that DNA methylation pattern jointly encode DNA methylation and clonal identity.
+This vignette describes how to generate the plots for Figure 2 of the EPI-Clone manuscript. We show how EPI-clone can cluster cells by clona identity without requiring genetic barcoding (such as LARRY).
 
-![Experimental design for experiment M.1. In total, four mice were transplanted with LARRY barcodes.](exp_overview_Fig2.png)
+![Figure 1: Experimental design for EPi-Clone. A shows how LARRY barcodes were introduced into HSCs and transplanted into four recipient mice analyzed here. B gives an overview of EPI-Clone.](exp_overview_Fig2.png)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -50,7 +49,8 @@ celltypeColors <- c("HSC/MPP1"="maroon4",
                     "MkP 2" = "#D36494",
                     "GMP" = "#C3C380",
                     "pre/pro-B" ="#94B1F9")
-plot_path <- '~'
+source('../../scripts/helper_functions.R')
+source('../..//scripts/EPIClone.R')
 ```
 
 This vignette introduces the EPI-Clone algorithm in detail. The convenient wrapper function  `epiclone` is described in the main readme of the github repo.
@@ -71,155 +71,197 @@ full_seurat <- readRDS(url('https://figshare.com/ndownloader/files/42479346'))
 larry <- subset(full_seurat, Experiment == "LARRY main experiment")
 ```
 
-We perform straightforward Seurat dimensionality reduction
+We perform straightforward Seurat dimensionality reduction.
 
 ```{r full_seurat, message=FALSE, warning=FALSE}
 usecpg <- rownames(larry)
 larry <- ScaleData(larry, assay = "DNAm", features = usecpg, verbose = F)
 larry <- RunPCA(larry, assay = "DNAm", features = usecpg, reduction.name = "pca", reduction.key = "PC_", npcs = 100, verbose = F)
 larry <- RunUMAP(larry, reduction = "pca", dims = 1:50, verbose = F)
+CpGSelection <- read.csv('../../infos/cpg_selection.csv', row.names = 1)
+selected_not_protein <- row.names(subset(CpGSelection, subset=Type=='Static'))
 ```
 
 
 ```{r setupcolors, echo = F}
+bigClone.relSize <- 0.0025
 cloneorder <- table(larry$LARRY)
-bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > 0.01]
+bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > bigClone.relSize]
+
 cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
 cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
 names(cloneColors.here) <- cloneorder
 cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
 ```
 
-We can highlight on this the *Celltype* annotation. See the other [vignette](../Figure1/Figure1.Rmd) for Figure 1 on how it was obtained.
+## Identification of big clones vs. small clones (Figure 2i-j)
 
-```{r fig1b_celltype_all, fig.width=4,fig.height=4}
-DimPlot(larry, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = celltypeColors)
+We perform dimensionality reduction on these CpGs only. Then we look for points in low-density regions (i.e. points which are far away from their nearest neighbors). There are a few parameters here:
+
+* `npcs.bigCloneSelection`: The number of PCs used here. Since the epimutation space appears to be random (there are no "correlated CpGs"), this number should be close to the number of CpGs included.
+
+* `k.bigCloneSelection` The number of nearest neighbors considered for computing the average distance to nearest neighbors. A small number, since we are looking for points in sparse areas
+
+* `thr.bigCloneSelection` Threshold to use. The lower the threshold, the more stringent the selection for big clones will be. This will become clearer below.
+
+The first step is to find the nearest neighbors and compute the distance:
+
+
+```{r epiclone_p2a, warning=FALSE,message=FALSE}
+npcs.bigCloneSelection <- 100
+k.bigCloneSelection <- 5
+thr.bigCloneSelection <- 0
+
+larry <- ScaleData(larry, assay = "DNAm", features = selected_not_protein, verbose = F)
+larry <- RunPCA(larry, assay = "DNAm", features = selected_not_protein, reduction.name = "clonePCA", reduction.key = "CLONEPC_", npcs = 100, verbose = F)
+larry <- RunUMAP(larry,reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, reduction.name = "cloneUMAP", reduction.key = "CLONEUMAP_" , verbose = F)
+larry <- FindNeighbors(larry, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = k.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" , verbose = F)
+larry$avgNNdist <- apply(larry@neighbors$clone.neighbors@nn.dist,1,function(x) mean(x[x>0]))
 ```
 
-In the main figure of the manuscript we show only the cells that carry a LARRY barcode. The cells where no LARRY barcode was observed (`r sprintf("%.1f %%", 100*mean(is.na(larry$LARRY)))` of cells - due to dropout, or cells falsely sorted as LARRY+ in the FACS) follow a similar distribution.
+This distance estimate seems to be impacted by technical covariates, which we regress out:
 
-```{r fig1b_clone_all, fig.width=6,fig.height=4}
+```{r epiclone_p2b}
+to.summarise <- larry@meta.data[, c("ProcessingBatch" ,"CellType","avgNNdist","nFeature_DNAm", "PerformanceNonHhaI")]
+m <- lm(avgNNdist ~ nFeature_DNAm + ProcessingBatch + CellType, data = to.summarise)
+larry$avgNNres <- residuals(m)
+```
+
+Then there is an optional step, which is to smoothen the resulting estimate locally across a larger group of neighbors. This massively improved performance (from AUPRC ~0.3 to ~0.63)
+
+
+```{r epiclone_p2c, message=F,warning=F}
+smoothen.bigCloneSelection <- 20
+larry <- FindNeighbors(larry, reduction = "clonePCA", dims = 1:npcs.bigCloneSelection, k.param = smoothen.bigCloneSelection, return.neighbor=T, graph.name = "clone.neighbors" )
+larry$avgNNres <- apply(larry@neighbors$clone.neighbors@nn.idx,1, function(x) mean(larry$avgNNres[x]))
+
+larry$selected <- larry$avgNNres < thr.bigCloneSelection
+```
+
+We can plot this quantity against clone size. The point clound on the left are cells with no larry barcode (see above, some of them are from expanded clones and have dropouts). The red line is the threshold used for selection; thisd plot can help defining an appropriate threshold, if clone size information is available. 
+
+```{r epiclone_plt2a, echo=FALSE, fig.width=5, fig.height=4}
+
+to.summarise$avgNNres <- larry$avgNNres
+    
+      to.summarise$cleanClone <- larry$LARRY
+      csize <- table(to.summarise$cleanClone)
+      larry$csize <- csize[as.character(larry$LARRY)] -> to.summarise$csize
+      to.summarise$csize[is.na(to.summarise$csize)] <- 0
+ggplot(aes(x = csize+1, y = avgNNres), data = to.summarise) + scale_x_log10() + geom_point(position = position_jitter(width=0.1),size=.5) + ylab("Distance to nearest neighbors") + xlab("LARRY clone size") + geom_hline(yintercept = thr.bigCloneSelection, color = "red") + scale_x_log10(breaks = c(1,10,100,1000), labels = c("NA",10,100,1000))
+    
+```
+If no clone size information is available, we recommend checking the density estimate on a uMAP and choosing a threshold that selects the big clusters, but not the cells interspersed between cluster.
+
+We can now recreate the plots from figure 1e,f, which visually demonstrate that cells from big clones are correctly selected. Again, we're only showing the cells that have a LARRY barcode (dropout follows similar distribution). In the first plot, grey dots are from clones with a relative clone sizes less than 0.25%.
+
+```{r peiclone_plt2b, echo=F, fig.width=4, fig.height=4.2}
 cloneorder <- table(larry$LARRY)
+bigclones <- names(cloneorder)[cloneorder/sum(cloneorder) > bigClone.relSize]
 cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
 
-cloneColors.here <- scales::hue_pal()(length(cloneorder))
-names(cloneColors.here) <- sample(names(cloneColors.here), length(names(cloneColors.here)))
-cloneColors.here <- sample(cloneColors.here, length(cloneColors.here))
-larry$use <- ifelse(!is.na(larry$LARRY), "LARRY barcode", "no LARRY barcode")
-DimPlot(subset(larry, subset=use=="LARRY barcode"), group.by = "LARRY",reduction="umap", order=cloneorder) + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = cloneColors.here)
+cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
+names(cloneColors.here) <- cloneorder
+cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
+
+larry$RelSize <- larry$csize/sum(table(larry$LARRY))
+larry$use <- !is.na(larry$LARRY)
+larry$isBigClone <- larry$LARRY %in% bigclones
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "LARRY") + NoLegend() + scale_color_manual(values = cloneColors.here) + NoAxes()+ ggtitle('')
+write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$LARRY), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2B.csv')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "CellType") + NoLegend() + scale_color_manual(values = celltypeColors) + NoAxes()+ ggtitle('')
+write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$CellType), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2C.csv')
+DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "selected") + NoLegend() + NoAxes() + scale_color_manual(values = c("TRUE" = "#AA0000", "FALSE" = "#555555")) + ggtitle('')
+write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$selected), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2D.csv')
 ```
 
-Here, different shades of grey correspond to different LARRY clones represented with up to 30 cells and different colors correspond to different LARRY clones represented with >30 cells.
+### Computation of ROC curves
 
-This plot suggests that overall, the methylome is impacted both by differentiation state and the clonal identity.
+If LARRY information is available, we can compute ROC curves
 
-## Identification of static CpGs (Figure 1d)
-
-To more cleanly identify clones, EPI-Clone first looks for CpGs that are *not* associated with differentiation. We use surface antigen expression as a proxy for differentiation, since it is completely independent of methylation; alternatively, if you have good cell state annotation obtained from methylation (see also other vignette on cell state), this can be used as well.  The `epiclone` wrapper function can handle both cases.
-
-```{r epiclone_pt1a, warning=FALSE, message=FALSE}
-min_cells <- 10
-
-#compute minimum pvalue for asociation with (any) protein
-suppressWarnings({
-  pvals <- apply(larry@assays$DNAm@data,1, function(met) {
-    apply(larry@assays$AB@data, 1, function(prot) {
-      use <- !is.na(prot)
-      a <- prot[use][met[use]==1]
-      b <- prot[use][met[use]==0]
-      if (length(a) < min_cells | length(b) < min_cells) return(1) else return(ks.test(a,b)$p.value)
-    })
-})
-min_pval <- apply(pvals, 2, min)
-
-#establish bonferroni criterion
-thr.protein.ass <- 1/(nrow(larry@assays$DNAm@data) * nrow(larry@assays$AB@data))
-
-#determine average overall methylation level
-avg_meth_rate <- apply(larry@assays$DNAm@data, 1, mean)
-})
-```
-
-
-We use the LARRY labels to compute, for each CpG, the statistical association with clone (more accurately, any clone bigger than 30 cells). This value is only used for plotting but not for selecting CpGs, so of course, EPI-Clone also workd without clonal labels
-
-```{r epiclone_pt1b, fig.width=5,fig.height=3}
+```{r roc, fig.width=4, fig.height=4}
 trueClone <- "LARRY"
-ncells.bigClone <- 30
-upper.thr.methrate <- 0.9
-lower.thr.methrate <- 0.25
 true_clone <- larry@meta.data[,trueClone]
-for_prediction <- larry
+larry$true_big_clone <-  larry$csize/sum(table(larry$LARRY)) > bigClone.relSize
+forAUC <-data.frame( true_small_clones =  larry$csize/sum(table(larry$LARRY)) <=  bigClone.relSize, 
+                     predictor = larry$avgNNres)
+forAUC <- na.omit(forAUC)
+predictions <- prediction( forAUC$predictor, forAUC$true_small_clones)
+perf <- performance(predictions, measure = "tpr", x.measure = "fpr" )
 
-for_prediction$use <- !is.na(true_clone)
-for_prediction <- subset(for_prediction, use)
-a <-table(for_prediction@meta.data[,trueClone])
-use_for_prediction <- names(a)[a > ncells.bigClone]
-for_prediction$use <- for_prediction@meta.data[,trueClone] %in% use_for_prediction
-for_prediction <- subset(for_prediction,use)
+write.csv(data.frame(x=perf@x.values, y=perf@y.values), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2E.csv')
 
-cloneid <- factor(for_prediction@meta.data[,trueClone], levels = unique(for_prediction@meta.data[,trueClone]))
-suppressWarnings({
-  pvals_cloneass <- p.adjust(apply(for_prediction@assays[["DNAm"]]@data,1,function(met) {
-  chisq.test(table(met,cloneid))$p.value
-}),method = "bonferroni")
-})
+plot(perf)
+abline(0,1)
 
-CpGSelection <- data.frame(CpG = names(pvals_cloneass), avg_meth_rate, min_pval, pvals_cloneass)
-selected_not_protein <- names(min_pval)[min_pval > thr.protein.ass & avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate]
-CpGSelection$Type <- ifelse(row.names(CpGSelection)%in%selected_not_protein, 'Static', ifelse(avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate, 'Dynamic', NA))
-write.csv(CpGSelection, '../../out/cpg_selection.csv')
-panel <- read.table('../../infos/panel_info_dropout_pwm.tsv',
-                    sep='\t',
-                    header=TRUE)
 
-to_plot <- data.frame(PVal=min_pval,
-                      AvgMeth=avg_meth_rate,
-                      PValClone=pvals_cloneass)
+auc <- performance(predictions, measure = "auc")
 
-ggplot(to_plot, aes(x = AvgMeth, y = log10(ifelse(PVal<1e-21, 1e-21, PVal)), color = -log10(PValClone+1e-50)))+
-  geom_point(size=.5, stroke=.5)+
-  geom_hline(yintercept = log10(thr.protein.ass)) + geom_vline(xintercept = c(lower.thr.methrate,upper.thr.methrate)) +
-  plot_theme + xlab("Average methylation") + ylab(ifelse(is.null(thr.protein.ass), "p value cell state association", "Association with surface\nprotein [log10]")) +
-  scale_color_gradientn(colours = c("black","blue","red"), name = "-log10 p-val\nClone association")+
-  scale_y_continuous(breaks=c(0, -7.5, -15), limits = c(-22,5))
 ```
 
-The `r sprintf("n = %d", length(selected_not_protein))` dots in the upper central rectangle of this plot (Figure 1D) are of interest as static CpGs and used further for clustering of clones
+Here results in an AUC `r sprintf("%.3f",auc@y.values[[1]])`.
 
-## Check the localization of static vs. dynamic CpGs (Figure 1e)
 
-```{r clonal_CpGs_genomic_distribution, fig.width=5,fig.height=3}
-panel_info <- read.table('../../infos/panel_info_dropout_pwm.tsv',
-                         sep='\t')
-plot_dat <- panel_info[row.names(CpGSelection), 'ChromState', drop=FALSE]
-plot_dat$ChromState <- c("active/weak promoter"='Other',
-                        "heterochromatin"="Heterochromatin",
-                        "poised promoter"='Other',
-                        "strong enhancer"='Enhancer',
-                        "transcription"='Other',
-                        "weak enhancer"='Enhancer')[plot_dat$ChromState]
-plot_dat <- data.frame(plot_dat[ ,'ChromState', drop=FALSE], CpGSelection)
-plot_dat <- na.omit(plot_dat)
-to_plot_dynamic <- plyr::count(plot_dat[plot_dat$Type=='Dynamic', ])
-to_plot_static <- plyr::count(plot_dat[plot_dat$Type=='Static', ])
-to_plot_dynamic$freq <- as.numeric(to_plot_dynamic$freq/sum(to_plot_dynamic$freq))
-to_plot_static$freq <- as.numeric(to_plot_static$freq/sum(to_plot_static$freq))
-to_plot <- rbind(to_plot_dynamic, to_plot_static)
-fisher.p <- fisher.test(table(plot_dat[plot_dat$ChromState!='Other', c('Type', 'ChromState')]))
-ggplot(to_plot, aes(x=Type, y=freq*100, fill=ChromState))+geom_bar(stat = 'identity')+plot_theme+scale_fill_manual(values=cols_chrom)+xlab('CpG Class')+ylab('%of CpGs in chromatin state')
+## Clustering of big clones only (Figure 1h)
+
+Mostly the clustering shown in the uMAP above is of good quality, but the cells from small clusters often falsely get assigned to some cluster. We therefore prefer to select only the big clones, and re-cluster. Again, this step has a couple of parameters
+
+* `npcs.Clustering` the number of PCs used. Again, should be close to the number of CpGs
+
+* `k.Clustering` Number of nearest neighbors. A bigger value than before, as we're now looking at big clones
+
+* `res.Clustering` Resolution of the clustering. Pretty high, unless there are very few big clones...
+
+```{r epiclone_pt3a, message=F, warning=F}
+npcs.Clustering = 100
+k.Clustering = 25
+res.Clustering=3
+
+for_clustering <- subset(larry, selected)
+    for_clustering <- ScaleData(for_clustering, assay = "DNAm", features = selected_not_protein, verbose=F)
+    for_clustering <- RunPCA(for_clustering, assay = "DNAm", features = selected_not_protein, reduction.name = "clonePCA", reduction.key = "CLONEPC_", npcs = 100, verbose=F)
+    for_clustering <- RunUMAP(for_clustering,reduction = "clonePCA", dims = 1:npcs.Clustering, reduction.name = "cloneUMAP", reduction.key = "CLONEUMAP_" , verbose=F)
+    
+    for_clustering <- FindNeighbors(for_clustering,reduction = "clonePCA", dims = 1:npcs.Clustering, k.param =k.Clustering, graph.name = "clone_nn", verbose=F)
+    for_clustering <- FindClusters(for_clustering, resolution=res.Clustering, graph.name = "clone_nn", verbose=F)
 ```
 
-Static CpGs are enriched in heterochromatic regions with p-value `r paste(fisher.p$p.value)`.
+We can now plot the clustering result and the ground truth clonal labels side by side. In gray are now cells without a LARRY barcode (dropouts that are part of big clones).
 
+```{r clusterresult, echo=F, fig.width=4,fig.height=4.2}
 
-## Visualization of default methylation state
-
-```{r methylation_stae}
-meth_cpgs <- GetAssayData(larry, assay="DNAm", slot='counts')
-plot_dat <- data.frame(Type=CpGSelection$Type, Methylation=ifelse(rowMeans(meth_cpgs[row.names(CpGSelection),])>0.5, 'Methylated', 'Unmethylated'))
-to_plot <- plyr::count(na.omit(plot_dat))
-to_plot[to_plot$Type=='Dynamic', 'freq'] <- to_plot[to_plot$Type=='Dynamic', 'freq']/sum(to_plot[to_plot$Type=='Dynamic', 'freq'])
-to_plot[to_plot$Type=='Static', 'freq'] <- to_plot[to_plot$Type=='Static', 'freq']/sum(to_plot[to_plot$Type=='Static', 'freq'])
-ggplot(to_plot, aes(x=Type, y=freq*100, fill=Methylation))+geom_bar(stat = 'identity')+plot_theme+xlab('CpG Class')+ylab('%of CpGs')+scale_fill_manual(values=c('Methylated'='#000000ff','Unmethylated'='#fcffa4ff'))
+DimPlot(for_clustering, reduction="cloneUMAP", label =T)  + NoLegend() + ggtitle("Clustering") +NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "LARRY")  + NoLegend() + NoAxes()
+DimPlot(for_clustering, reduction="cloneUMAP", group.by = "CellType")  + NoLegend() + NoAxes()
 ```
+
+The Adjusted Rand index is `r sprintf("%.3f", adj.rand.index(as.integer(as.factor(Idents(for_clustering))), as.integer(as.factor(for_clustering@meta.data[,trueClone]))))`.
+
+We can also plot the overlap as a heatmap:
+
+```{r heatmap, echo=F, fig.width=6,fig.height=4}
+cloneSizes <- table(for_clustering@meta.data[,trueClone])
+new_clust <- as.factor(ifelse(cloneSizes[for_clustering@meta.data[,trueClone]]/sum(cloneSizes) <= 0.0025, "small clone", for_clustering@meta.data[,trueClone]))
+names(new_clust) <- Cells(for_clustering)
+for_clustering$CloneForRiver <- new_clust
+
+forriver <- data.frame(LARRY = factor(for_clustering$CloneForRiver), unsuper = Idents(for_clustering))
+forriver <- acast(LARRY ~unsuper, data= forriver,fun.aggregate = length)
+
+
+forriver <- forriver[rownames( forriver) != "NA",]
+forriver_norm <- t(t(forriver) / colSums(forriver))
+dist.col <- as.dist(1-cor(forriver_norm))
+dist.row <- as.dist(1-cor(t(forriver_norm)))
+
+maxis <- apply(forriver_norm[!rownames(forriver_norm) %in% c("NA","small clone"),],2,max)
+rownames(forriver_norm)[!rownames(forriver_norm) %in% c("NA","small clone")] <- ""
+
+write.csv(forriver_norm[,order(maxis)], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2F.csv')
+pheatmap(forriver_norm[,order(maxis)],cluster_cols = F,fontsize_col=6,clustering_distance_rows = dist(forriver_norm[,order(maxis)]),
+         color = colorRampPalette(c("white","blue","purple","red"))(100))
+```
+
+
+Careful with cluster 4 - a big cluster mostly containing cells from small clones and NA! Likely this is a cluster of cells that falsely passed the original selection of "expanded clones"! We excluded it from the analyses in figure 2f+g.
+

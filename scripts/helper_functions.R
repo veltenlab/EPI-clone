@@ -15,7 +15,9 @@ plot_tfbs_methylation <- function(seurat_rna,
                                   tfbs,
                                   panel,
                                   point_size=.5,
-                                  umap.field='UMAP'){
+                                  umap.field='UMAP',
+                                  export_to_plot=FALSE,
+                                  export_file=NULL){
   require(viridis)
   panel <- read.table(panel, sep='\t')
   sel_amplis <- intersect(row.names(panel[!is.na(panel[, tfbs]), ]), colnames(counts))
@@ -24,6 +26,9 @@ plot_tfbs_methylation <- function(seurat_rna,
   to_plot <- as.data.frame(seurat_rna[['umap']]@cell.embeddings)
   to_plot <- data.frame(to_plot, TFBS=meth_tfbs)
   colnames(to_plot)[ncol(to_plot)] <- tfbs
+  if(export_to_plot){
+    write.csv(to_plot, export_file)
+  }
   plot <- ggplot(to_plot, aes_string(x=paste0(umap.field, '_1'), y=paste0(umap.field, '_2'), color=tfbs))+geom_point(size=.35, stroke=.35)+
     plot_theme+scale_color_viridis(option='mako', direction=-1, name="Relative\nMethylation")
   
@@ -35,7 +40,9 @@ plot_type_methylation <- function(seurat_rna,
                                   type,
                                   panel,
                                   point_size=.5,
-                                  umap.field='UMAP'){
+                                  umap.field='UMAP',
+                                  export_to_plot=FALSE,
+                                  export_file=NULL){
   require(viridis)
   panel <- read.table(panel, sep='\t')
   sel_amplis <- intersect(row.names(panel[which(panel$Type==type), ]), colnames(counts))
@@ -44,6 +51,9 @@ plot_type_methylation <- function(seurat_rna,
   to_plot <- as.data.frame(seurat_rna[['umap']]@cell.embeddings)
   to_plot <- data.frame(to_plot, TFBS=meth_tfbs)
   colnames(to_plot)[ncol(to_plot)] <- type
+  if(export_to_plot){
+    write.csv(to_plot, export_file)
+  }
   plot <- ggplot(to_plot, aes_string(x=paste0(umap.field, '_1'), y=paste0(umap.field, '_2'), color=type))+geom_point(size=.35, stroke=.35)+
     plot_theme+scale_color_viridis(option='mako', direction=-1, name="Relative\nMethylation")
   

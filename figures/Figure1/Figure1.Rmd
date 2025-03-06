@@ -12,6 +12,7 @@ This vignette describes how to generat the plots for Figure 1 of the EPI-Clone m
 ![Three experiments were used and analyzed together to generate a low-dimensional representation of DNA methylation in murine HSPCs.](exp_overview_Fig1.png)
 
 ```{r setup, include=FALSE}
+.libPaths(c(.libPaths(),"/home/mscherer/R/x86_64-pc-linux-gnu-library/4.2/"))
 library(Seurat)
 library(ggplot2)
 library(viridis)
@@ -76,6 +77,16 @@ source('../..//scripts/EPIClone.R')
 
 This vignette shows some applications of EPI-clone in combination with the DNA methylation readout provided by scTAM-seq.
 
+## Write amplicon csv
+
+```{r panel}
+panel <- read.table('../../infos/panel_info_dropout_pwm.tsv')
+to_write <- panel[panel$DropoutUncutLKs>0.9, 'Type']
+to_write <- to_write[to_write%in%c('HSC_high', 'MPP_high', 'MPPI_high', 'MPPII_high', 'WSH', 'IMR')]
+to_write[to_write%in%c('HSC_high', 'MPP_high', 'MPPI_high', 'MPPII_high')] <- 'DMC'
+write.csv(table(to_write), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1B.csv')
+```
+
 ## Differentiation uMAP (Figure 1c)
 
 We simply load the data and visualize the integrated uMAP that shows three differentiation trajectories.
@@ -83,6 +94,7 @@ We simply load the data and visualize the integrated uMAP that shows three diffe
 ```{r differentiation_umap, warning=F, message=F}
 seurat_obj <- readRDS(url('https://figshare.com/ndownloader/files/42479346'))
 DimPlot(seurat_obj, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = color_map)
+write.csv(data.frame(seurat_obj@reductions$umap@cell.embeddings, CellType=seurat_obj$CellType), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1C.csv')
 ```
 
 ## Cell type annotation with bulk profiles
@@ -97,16 +109,21 @@ counts <- as.matrix(GetAssayData(seurat_obj,
 plot_hsc <- plot_type_methylation(seurat_obj,
                                   t(counts),
                                   type='HSC_high',
-                                  panel = panel_file)+
-  plot_theme_title+ggtitle('HSC high')
+                                  panel = panel_file,
+                                  export_to_plot=TRUE,
+                                  export_file='/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1D1.csv')+
+  plot_theme_title#+ggtitle('HSC high')
 plot_mpp <- plot_type_methylation(seurat_obj,
                                   t(counts),
                                   type='MPP_high',
-                                  panel = panel_file)+
-  plot_theme_title+ggtitle('MPP3/4 high')
+                                  panel = panel_file,
+                                  export_to_plot=TRUE,                                  export_file='/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1D.csv')+
+  plot_theme_title#+ggtitle('MPP3/4 high')
+png('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/final_revision/Figure1/hsc_mpp1.png', height=25, width=35, unit='mm', res=300)
 grid.arrange(plot_hsc,
              plot_mpp,
-             nrow=2)
+             nrow=1)
+dev.off()
 ```
 
 ## Surface protein expression per cell type 
@@ -145,6 +162,7 @@ abs <- c('SCA1',
          'cKIT')
 to_plot <- data.frame(plot_dat[, c(paste0(abs, extension),'CellType')])
 colnames(to_plot)[1:2] <-abs
+write.csv(to_plot,                             '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1G1.csv')
 plot1 <- ggplot(to_plot, aes_string(x='SCA1', y='cKIT', color='CellType'))+
   geom_point(size=.5, stroke=.5)+
   geom_vline(xintercept = sca1_gate)+geom_hline(yintercept = ckit_gate)+
@@ -155,6 +173,7 @@ abs <- c('CD201',
          'CD135')
 to_plot <- data.frame(plot_dat[, c(paste0(abs, extension),'CellType')])
 colnames(to_plot)[1:2] <- abs
+write.csv(to_plot,                              '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1G2.csv')
 plot2 <- ggplot(to_plot, aes_string(x=abs[1], y=abs[2], color='CellType'))+
   geom_vline(xintercept = 1)+geom_hline(yintercept = 1)+
   geom_jitter(size=.5, stroke=.5, width = .1, height = .1)+
@@ -164,16 +183,18 @@ abs <- c('CD48',
          'CD150')
 to_plot <- data.frame(plot_dat[, c(paste0(abs, extension),'CellType')])
 colnames(to_plot)[1:2] <- abs
+write.csv(to_plot,                              '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1F.csv')
 plot3 <- ggplot(to_plot, aes_string(x=abs[1], y=abs[2], color='CellType'))+
   geom_point(size=.5, stroke=.5)+
   geom_vline(xintercept = 1)+geom_hline(yintercept = 1)+
   plot_theme+scale_color_manual(values=color_map)
 
-
+png('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/final_revision/Figure1/ab_expression.png', height=37.5, width=97.5, unit='mm', res=300)
 grid.arrange(plot1,
              plot2,
              plot3,
              nrow=1)
+dev.off()
 ```
 
 ## Visualize TFBS methylation
@@ -184,11 +205,13 @@ By using the methylation at CpGs located in the vicinity of a TFBS, we can compu
 plot_gata2 <- plot_tfbs_methylation(seurat_obj,
                       t(counts),
                       panel=panel_file,
-                      'Gata2_ChIP')+plot_theme_title+ggtitle('Gata2')
+                      'Gata2_ChIP',
+                      export_to_plot=FALSE)+plot_theme_title+ggtitle('Gata2')
 plot_spi <- plot_tfbs_methylation(seurat_obj,
                                    t(counts),
                                    panel=panel_file,
-                                   'Spi1')+plot_theme_title+ggtitle('Spi1')
+                                   'Spi1',
+                                  export_to_plot=FALSE)+plot_theme_title+ggtitle('Spi1')
 grid.arrange(plot_gata2,
              plot_spi,
              nrow=2)
@@ -302,6 +325,7 @@ to_plot <- to_plot[c('Scl_ChIP',
                      'Ebf1',
                      'Myb',
                      'Spi1'), ]
+write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1E.csv')
 corrplot(-log10(t(to_plot+1e-6)),
          is.corr = FALSE,
          tl.col = 'black',
@@ -334,8 +358,10 @@ grid.arrange(plot_hsc, plot_meth, layout_matrix=as.matrix(c(1,1,2,2,2)))
 ## Transcriptomic uMAP
 
 ```{r transcriptomic_umap, warning=F, message=F}
-seurat_rna <- readRDS(url("https://figshare.com/ndownloader/files/42587815"))
-DimPlot(seurat_rna, group.by = "CellType") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = color_map)
+#seurat_rna <- readRDS(url("https://figshare.com/ndownloader/files/42587815"))
+seurat_rna <- readRDS("/home/mscherer/cluster/project/Methylome/analysis/HSCs/GeX/LARRY/objects/seurat_LK_LSK.RDS")
+DimPlot(seurat_rna, group.by = "CellType", reduction = "umap_harmony") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = color_map)
+write.csv(data.frame(seurat_rna@reductions$umap_harmony@cell.embeddings, CellType=seurat_rna$CellType), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/ExtFigure2/source_data/Fig2A.csv')
 ```
 
 ## Compare information content on cell types
@@ -436,3 +462,212 @@ to_plot <- reshape2::melt(adt_rna, id='CellType')
 plot_rna <- ggplot(to_plot, aes(x=CellType, y=value, fill=CellType))+geom_boxplot(outlier.size = .5)+plot_theme+facet_wrap(variable~., nrow=1)+scale_fill_manual(values=c('HSC/MPP1'='maroon4', 'HSC1'='maroon2', 'HSC2'='maroon1', 'HSC3'='maroon3', color_map))+ylab('Protein expression')+theme(axis.text.x = element_text(angle=45, hjust=1))+xlab('')
 grid.arrange(plot_dnam, plot_rna, nrow=2)
 ```
+
+## Unsupervised uMAP (Figure 1b,c)
+
+First we load the data and perform an unsupervised dimensionality reduction of all CpGs.
+
+```{r readData, warning=F, message=F}
+require(Seurat)
+require(ggplot2)
+require(ROCR)
+require(fossil)
+require(reshape2)
+require(pheatmap)
+require(GenomicRanges)
+full_seurat <- readRDS("/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/processing/EPI_clone_seurat.RDS")
+larry <- subset(full_seurat, Experiment == "LARRY main experiment")
+```
+
+We perform straightforward Seurat dimensionality reduction
+
+```{r full_seurat, message=FALSE, warning=FALSE}
+usecpg <- rownames(larry)
+larry <- ScaleData(larry, assay = "DNAm", features = usecpg, verbose = F)
+larry <- RunPCA(larry, assay = "DNAm", features = usecpg, reduction.name = "pca", reduction.key = "PC_", npcs = 100, verbose = F)
+larry <- RunUMAP(larry, reduction = "pca", dims = 1:50, verbose = F)
+```
+
+
+```{r setupcolors, echo = F}
+cloneorder <- table(larry$LARRY)
+bigclones <- names(cloneorder)[cloneorder > 30]
+cloneorder <- names(cloneorder)[order(cloneorder, decreasing = T)]
+cloneColors.here <- scales::grey_pal(end = 1)(length(unique(cloneorder)))
+names(cloneColors.here) <- cloneorder
+cloneColors.here[bigclones] <- scales::hue_pal()(length(bigclones))
+```
+
+
+We can highlight on this the *Celltype* annotation. See the other vignette on how it was obtained.
+
+```{r fig1b_celltype_all, fig.width=4,fig.height=4}
+celltypeColors <- c("HSC/MPP1"="maroon4",
+                    "MPP2" ="darkgrey",
+                    "MPP3" = "darkblue",
+                    "MPP4" = "darkgreen",
+                    "MEP"="#D5392C",
+                    "EryP" = "#ED7950",
+                    "MkP 1" = "#BDA8CB",
+                    "MkP 2" = "#D36494",
+                    "GMP" = "#C3C380",
+                    "pre/pro-B" ="#94B1F9")
+DimPlot(larry, group.by = "CellType",reduction="umap") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = celltypeColors)
+write.csv(data.frame(larry@reductions$umap@cell.embeddings, CellType=larry$CellType), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1G.csv')
+```
+
+In the main figure of the manuscript we show only the cells that carry a LARRY barcode. The cells where no LARRY barcode was observed (`r sprintf("%.1f %%", 100*mean(is.na(larry$LARRY)))` of cells - due to dropout, or cells falsely sorted as LARRY+ in the FACS) follow a similar distribution.
+
+```{r fig1b_clone_all, fig.width=6,fig.height=4}
+larry$use <- ifelse(!is.na(larry$LARRY), "LARRY barcode", "no LARRY barcode")
+DimPlot(larry, group.by = "LARRY",reduction="umap", order=cloneorder, split.by = "use") + ggtitle("") + NoAxes() + NoLegend() + scale_color_manual(values = cloneColors.here)
+write.csv(data.frame(larry@reductions$umap@cell.embeddings[larry$use=="LARRY barcode", ], LARRY=larry$LARRY[larry$use=="LARRY barcode"]), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1H.csv')
+
+```
+
+Here, different shades of grey correspond to different LARRY clones represented with up to 30 cells and different colors correspond to different LARRY clones represented with >30 cells.
+
+This plot suggests that overall, the methylome is impacted both by differentiation state and the clonal identity.
+
+## Identification of static CpGs (Figure 1d)
+
+To more cleanly identify clones, EPI-Clone first looks for CpGs that are *not* associated with differentiation. We use surface antigen expression as a proxy for differentiation, since it is completely independent of methylation; alternatively, if you have good cell state annotation obtained from methylation (see also other vignette on cell state), this can be used as well.  The `epiclone` wrapper function can handle both cases.
+
+```{r epiclone_pt1a, warning=FALSE, message=FALSE}
+
+  #compute minimum pvalue for asociation with (any) protein
+  suppressWarnings({
+    
+  pvals <- apply(larry@assays$DNAm@data,1, function(met) {
+    apply(larry@assays$AB@data, 1, function(prot) {
+      use <- !is.na(prot)
+      a <- prot[use][met[use]==1]
+      b <- prot[use][met[use]==0]
+      if (length(a) < 3 | length(b) < 3) return(1) else return(ks.test(a,b)$p.value)
+    })
+  })
+  min_pval <- apply(pvals,2,min)
+  
+  #establish bonferroni criterion
+  thr.protein.ass <- 1/(nrow(larry@assays$DNAm@data) * nrow(larry@assays$AB@data))
+  
+  #determine average overall methylation level
+  avg_meth_rate <- apply(larry@assays$DNAm@data, 1, mean)
+  })
+```
+
+
+We use the LARRY labels to compute, for each CpG, the statistical association with clone (more accurately, any clone bigger than 30 cells). This value is only used for plotting but not for selecting CpGs, so of course, EPI-Clone also workd without clonal labels
+
+```{r epiclone_pt1b, fig.width=5,fig.height=3}
+trueClone <- "LARRY"
+ncells.bigClone <- 30
+upper.thr.methrate <- 0.9
+lower.thr.methrate <- 0.25
+true_clone <- larry@meta.data[,trueClone]
+for_prediction <- larry
+
+for_prediction$use <- !is.na(true_clone)
+for_prediction <- subset(for_prediction, use)
+a <-table(for_prediction@meta.data[,trueClone])
+use_for_prediction <- names(a)[a > ncells.bigClone]
+for_prediction$use <- for_prediction@meta.data[,trueClone] %in% use_for_prediction
+for_prediction <- subset(for_prediction,use)
+
+cloneid <- factor(for_prediction@meta.data[,trueClone], levels = unique(for_prediction@meta.data[,trueClone]))
+suppressWarnings({
+  pvals_cloneass <- p.adjust(apply(for_prediction@assays[["DNAm"]]@data,1,function(met) {
+  chisq.test(table(met,cloneid))$p.value
+}),method = "bonferroni")
+})
+
+CpGSelection <- data.frame(CpG = names(pvals_cloneass), avg_meth_rate, min_pval, pvals_cloneass)
+selected_not_protein <- names(min_pval)[min_pval > thr.protein.ass & avg_meth_rate < upper.thr.methrate & avg_meth_rate > lower.thr.methrate]
+CpGSelection$Type <- ifelse(row.names(CpGSelection)%in%selected_not_protein, 'Static', 'Dynamic')
+write.csv(CpGSelection, 'cpg_selection.csv')
+panel <- read.table('/home/mscherer/cluster/project/Methylome/infos/HSCs/panel_info_dropout_pwm.tsv',
+                    sep='\t',
+                    header=TRUE)
+
+to_plot <- data.frame(PVal=min_pval,
+                      AvgMeth=avg_meth_rate,
+                      PValClone=pvals_cloneass)
+write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1I.csv')
+
+ggplot(to_plot, aes(x = AvgMeth, y = log10(ifelse(PVal<1e-21, 1e-21, PVal)), color = -log10(PValClone+1e-50)))+
+  geom_point(size=.5, stroke=.5)+
+  geom_hline(yintercept = log10(thr.protein.ass)) + geom_vline(xintercept = c(lower.thr.methrate,upper.thr.methrate)) +
+  plot_theme + xlab("Average methylation") + ylab(ifelse(is.null(thr.protein.ass), "p value cell state association", "Association with surface\nprotein [log10]")) +
+  scale_color_gradientn(colours = c("black","blue","red"), name = "-log10 p-val\nClone association")+
+  scale_y_continuous(breaks=c(0, -7.5, -15), limits = c(-22,5))
+
+ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/final_revision/Figure1/static_dynamic.pdf',
+       height=55, width=45, unit='mm')
+```
+
+The `r sprintf("n = %d", length(selected_not_protein))` dots in the upper central rectangle of this plot (Figure 1D) are of interest as static CpGs and used further for clustering of clones
+
+## Check the localization of static vs. dynamic CpGs (Figure 1e)
+
+```{r clonal_CpGs_genomic_distribution, fig.width=5,fig.height=3}
+cols_chrom <- c('active/weak promoter'='#ff678c',
+          'Enhancer'='#ffdc64',
+          'transcription'='#008c64',
+          'Heterochromatin'='#6e1e8c',
+          'weak enhancer'='#ffff00',
+          'H3K9me3-repressed'='#787878',
+          'Other'='#aaaaaa',
+          'H3K9me3-repressed'='#f0f0f0')
+#panel_info <- read.table('infos/panel_info_dropout_pwm.tsv',
+panel_info <- read.table('/home/mscherer/cluster/project/Methylome/infos/HSCs/panel_info_dropout_pwm.tsv',
+                         sep='\t')
+plot_dat <- panel_info[row.names(CpGSelection), 'ChromState', drop=FALSE]
+plot_dat$ChromState <- c("active/weak promoter"='Other',
+                        "heterochromatin"="Heterochromatin",
+                        "poised promoter"='Other',
+                        "strong enhancer"='Enhancer',
+                        "transcription"='Other',
+                        "weak enhancer"='Enhancer')[plot_dat$ChromState]
+plot_dat$Type <- ifelse(row.names(plot_dat)%in%selected_not_protein, 'static', 'dynamic')
+to_plot_dynamic <- plyr::count(plot_dat[plot_dat$Type=='dynamic', ])
+to_plot_static <- plyr::count(plot_dat[plot_dat$Type=='static', ])
+to_plot_dynamic$freq <- to_plot_dynamic$freq/sum(to_plot_dynamic$freq)
+to_plot_static$freq <- to_plot_static$freq/sum(to_plot_static$freq)
+to_plot <- rbind(to_plot_dynamic, to_plot_static)
+write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/source_data/Fig1J.csv')
+fisher.p <- fisher.test(table(plot_dat[plot_dat$ChromState!='Other', c('Type', 'ChromState')]))
+ggplot(to_plot, aes(x=Type, y=freq*100, fill=ChromState))+geom_bar(stat = 'identity')+plot_theme+scale_fill_manual(values=cols_chrom)+xlab('CpG Class')+ylab('%of CpGs in chromatin state')
+ggsave('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/final_revision/Figure1/chromatin.pdf',
+       height=48, width=27, unit='mm')
+```
+Static CpGs are enriched in heterochromatic regions with p-value `r paste(fisher.p$p.value)`.
+
+```{r repli_timing}
+repli_data <- as.data.frame(read.table('/home/mscherer/cluster/project/Methylome/infos/HSCs/repli_seq/GSE95091_46C_repli-seq_mm10_log_ratio_scaled.bedGraph.gz',
+                                         sep='\t'))
+repli_data_gr <- makeGRangesFromDataFrame(repli_data,
+                                          seqnames.field = 'V1',
+                                          start.field = 'V2',
+                                          end.field = 'V3',
+                                          keep.extra.columns = TRUE)
+repli_signal <- as.numeric(repli_data$V4)
+panel.gr <-  makeGRangesFromDataFrame(panel_info, seqnames.field = 'chr', start.field = 'amplicon_start', end.field = 'amplicon_end')
+op <- findOverlaps(panel.gr, repli_data_gr, select = 'first')
+panel_info$RepliSignal <- repli_signal[op]
+panel_info$RepliDisc <- ifelse(panel_info$RepliSignal>0, 'Early', 'Late')
+CpGSelection <- read.csv('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/cpg_selection.csv', row.names = 1)
+plot_dat <- panel_info[row.names(CpGSelection), 'RepliDisc', drop=FALSE]
+plot_dat <- data.frame(plot_dat[ ,'RepliDisc', drop=FALSE], CpGSelection)
+plot_dat <- na.omit(plot_dat)
+to_plot_dynamic <- plyr::count(plot_dat[plot_dat$Type=='Dynamic', ])
+to_plot_static <- plyr::count(plot_dat[plot_dat$Type=='Static', ])
+to_plot_dynamic$freq <- to_plot_dynamic$freq/sum(to_plot_dynamic$freq)
+to_plot_static$freq <- to_plot_static$freq/sum(to_plot_static$freq)
+to_plot <- rbind(to_plot_dynamic, to_plot_static)
+write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/ExtFigure2/source_data/Fig2G.csv')
+fisher.p <- fisher.test(table(plot_dat[, c('Type', 'RepliDisc')]))
+ggplot(to_plot, aes(x=Type, y=freq*100, fill=RepliDisc))+geom_bar(stat = 'identity')+plot_theme+xlab('CpG Class')+ylab('%of CpGs in replicating domain')+scale_fill_manual(values=c('Early'='#ff678c','Late'='#008c64'))
+ggsave(file.path('/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure1/replication_timing.pdf'), height=50, width=35, unit='mm')
+```
+Static CpGs are enriched in late replicating domains with p-value `r paste(fisher.p$p.value)`.
+
