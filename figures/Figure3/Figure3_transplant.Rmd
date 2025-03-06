@@ -13,7 +13,6 @@ This vignette highlights the analysis of experiment M.8 of the EPI-Clone manuscr
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 require(ggplot2)
-require(ggpubr)
 require(ggrepel)
 require(RColorBrewer)
 require(plotrix)
@@ -248,12 +247,11 @@ wilcox.test(cluster_negative, cluster_positive)
 ```
 
 ```{r compare_clone_sizes}
-library(ggpubr)
 clone_sizes_old <- table(epiclone_seurat$seurat_clusters[epiclone_seurat$Sample=='Old'])
 clone_sizes_transplant <- table(epiclone_seurat$seurat_clusters[epiclone_seurat$Sample=='Transplant'])
 to_plot <- data.frame(Old=as.data.frame(clone_sizes_old)$Freq, Transplant=as.data.frame(clone_sizes_transplant)$Freq)
 to_plot <- to_plot[apply(to_plot,1,min)>0,]
-ggplot(to_plot, aes(x=Old, y=Transplant))+geom_point()+geom_smooth(method='lm', se=FALSE)+stat_cor()+plot_theme
+ggplot(to_plot, aes(x=Old, y=Transplant))+geom_point()+geom_smooth(method='lm', se=FALSE)+plot_theme
 ```
 
 
@@ -342,32 +340,4 @@ hm <- ComplexHeatmap::Heatmap(na.omit(frequencies[, c(c_donor, c_transplant)]),
                               column_split = col_anno_fr$Sample,
                               column_title_gp = gpar(fontsize = 8))
 draw(hm)
-```
-
-```{r correlation}
-any_na <- apply(frequencies_donor, 1, function(x)any(is.na(x)))|apply(frequencies_transplant, 1, function(x)any(is.na(x)))
-cors <- cor(frequencies_donor[!any_na,], frequencies_transplant[!any_na, ])
-p_vals <- matrix(NA, nrow=4, ncol = 4)
-for(i in 1:ncol(frequencies_donor)){
-  for(j in 1:ncol(frequencies_transplant)){
-    p_vals[i, j] <- cor.test(frequencies_donor[!any_na, i], frequencies_transplant[!any_na, j])$p.value
-  }
-}
-dimnames(p_vals) <- dimnames(cors)
-corrplot(cors, p.mat=p_vals, insig = 'p-value', tl.col = 'black', col=rev(COL2('RdBu', 200)), sig.level=0.0001)
-```
-
-```{r output_scatterplots}
-to_plot <- data.frame(frequencies_donor[!any_na, ], frequencies_transplant[!any_na,])
-ggplot(to_plot, aes(x=immature_Donor, immature_Transplant))+geom_point()+plot_theme+stat_cor()
-ggplot(to_plot, aes(x=lymphoid_Donor, lymphoid_Transplant))+geom_point()+plot_theme+stat_cor()
-ggplot(to_plot, aes(x=immature_Donor, lymphoid_Transplant))+geom_point()+plot_theme+stat_cor()
-
-```
-
-```{r cells_expanded_clones}
-clone_counts_transplant <- plyr::count(Idents(epiclone_seurat)[epiclone_seurat$Sample=='Transplant'])
-clone_counts_old <- plyr::count(Idents(epiclone_seurat)[epiclone_seurat$Sample=='Old'])
-expanded_transplant <- sum(clone_counts_transplant$freq[clone_counts_transplant$freq>30])/length(Cells(seurat_transplant))
-expanded_donor <-  sum(clone_counts_old$freq[clone_counts_old$freq>30])/length(Cells(seurat_old))
 ```

@@ -1,7 +1,7 @@
 ---
 title: "EPI-Clone Figure 2"
 author: "Michael Scherer & Lars Velten"
-date: "18/12/2024"
+date: "06/03/2025"
 output: html_document
 ---
 
@@ -168,11 +168,8 @@ larry$RelSize <- larry$csize/sum(table(larry$LARRY))
 larry$use <- !is.na(larry$LARRY)
 larry$isBigClone <- larry$LARRY %in% bigclones
 DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "LARRY") + NoLegend() + scale_color_manual(values = cloneColors.here) + NoAxes()+ ggtitle('')
-write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$LARRY), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2B.csv')
 DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "CellType") + NoLegend() + scale_color_manual(values = celltypeColors) + NoAxes()+ ggtitle('')
-write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$CellType), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2C.csv')
 DimPlot(subset(larry,use), reduction = "cloneUMAP", group.by = "selected") + NoLegend() + NoAxes() + scale_color_manual(values = c("TRUE" = "#AA0000", "FALSE" = "#555555")) + ggtitle('')
-write.csv(data.frame(subset(larry,use)@reductions$umap@cell.embeddings, LARRY=subset(larry,use)$selected), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2D.csv')
 ```
 
 ### Computation of ROC curves
@@ -188,8 +185,6 @@ forAUC <-data.frame( true_small_clones =  larry$csize/sum(table(larry$LARRY)) <=
 forAUC <- na.omit(forAUC)
 predictions <- prediction( forAUC$predictor, forAUC$true_small_clones)
 perf <- performance(predictions, measure = "tpr", x.measure = "fpr" )
-
-write.csv(data.frame(x=perf@x.values, y=perf@y.values), '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2E.csv')
 
 plot(perf)
 abline(0,1)
@@ -257,7 +252,6 @@ dist.row <- as.dist(1-cor(t(forriver_norm)))
 maxis <- apply(forriver_norm[!rownames(forriver_norm) %in% c("NA","small clone"),],2,max)
 rownames(forriver_norm)[!rownames(forriver_norm) %in% c("NA","small clone")] <- ""
 
-write.csv(forriver_norm[,order(maxis)], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure2/source_data/Fig2F.csv')
 pheatmap(forriver_norm[,order(maxis)],cluster_cols = F,fontsize_col=6,clustering_distance_rows = dist(forriver_norm[,order(maxis)]),
          color = colorRampPalette(c("white","blue","purple","red"))(100))
 ```

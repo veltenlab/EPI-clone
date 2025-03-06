@@ -1,5 +1,5 @@
 ---
-title: "EPI-Clone Figure 5"
+title: "EPI-Clone Figure 3"
 author: "Michael Scherer & Lars Velten"
 date: "18/12/2023"
 output: html_document
@@ -144,7 +144,6 @@ epi_young_seurat$seurat_clusters[epi_young_seurat$seurat_clusters%in%small_clone
 to_plot <- data.frame(epi_young_seurat[["cloneUMAP"]]@cell.embeddings, Clone=epi_young_seurat$seurat_clusters)
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 ggplot(to_plot, aes(x=CLONEUMAP_1 , y=CLONEUMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c(cols, cols), na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3A.csv')
 ```
 
 ```{r compare_cluster_sizes}
@@ -184,7 +183,6 @@ ggplot(to_plot, aes(x=Sample, y=RelFreq, fill=x))+geom_histogram(stat='identity'
 to_plot <- data.frame(epi_old_seurat[["cloneUMAP"]]@cell.embeddings, Clone=epi_old_seurat$seurat_clusters)
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 ggplot(to_plot, aes(x=CLONEUMAP_1 , y=CLONEUMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=cols, na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3B.csv')
 ```
 
 ```{r clone_sizes_old}
@@ -216,7 +214,6 @@ rep2 <- read.csv('../../infos/compare_clone_sizes.csv', row.names=1)
 rep2$Replicate <- 'Replicate2'
 to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot, aes(x=Sample, y=RelFreq, fill=x))+geom_histogram(stat='identity')+plot_theme+scale_fill_manual(values=c(cols, cols), na.value = 'gray75')+facet_wrap(Replicate~., nrow=1)
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3C.csv')
 print(paste('Old big clone (rep1)', sum(sizes_old[!is.na(sizes_old$x), 'RelFreq']), 'Small clones:', sizes_old[is.na(sizes_old$x), 'RelFreq']))
 print(paste('Old big clone (rep2)', sum(rep2[!is.na(rep2$x)&rep2$Sample=='Old', 'RelFreq']), 'Small clones:', rep2[is.na(rep2$x)&rep2$Sample=='Old', 'RelFreq']))
 print(paste('Young big clone', sum(sizes_young[!is.na(sizes_young$x), 'RelFreq']), 'Small clones:', sizes_young[is.na(sizes_young$x), 'RelFreq']))
@@ -449,7 +446,6 @@ to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot[!is.na(to_plot$CellType),], aes(x=seurat_clusters, y=RelFreq, fill=Sample, color=Replicate))+scale_color_manual(values=c('Replicate1'='black', 'Replicate2'='black'))+geom_histogram(stat='identity', position='dodge', size=.1)+
   plot_theme+scale_fill_manual(values=c('Old'='#cc246eff', 'Young'='#661237ff'))+xlab('Clones')+
   theme(axis.text.x = element_blank())+ylab('Percentage of all HSC/MPP1 in clone')
-write.csv(to_plot[!is.na(to_plot$CellType),], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3D1.csv')
 
 ```
 
@@ -494,7 +490,6 @@ to_plot <- rbind(to_plot, rep2)
 ggplot(to_plot[!is.na(to_plot$CellType),], aes(x=seurat_clusters, y=RelFreq, fill=Sample, color=Replicate))+geom_histogram(stat='identity', position='dodge', size=.1)+
   plot_theme+scale_fill_manual(values=c('Old'='#d9d98e', 'Young'='#808054'))+scale_color_manual(values=c('Replicate1'='black', 'Replicate2'='black'))+xlab('Clones')+
   theme(axis.text.x = element_blank())+ylab('Percentage of all myeloid cells in clone')
-write.csv(to_plot[!is.na(to_plot$CellType),], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3D2.csv')
 
 ```
 
@@ -533,7 +528,6 @@ to_plot_fraction <- merge(to_plot, to_plot_myeloid, by=c('Sample', 'Replicate', 
 to_plot_fraction$Fraction <- to_plot_fraction$RelFreq.x/to_plot_fraction$RelFreq.y
 ggplot(to_plot_fraction[to_plot_fraction$Sample=='Old', ], aes(x=Replicate, y=Fraction, fill=Bias))+geom_boxplot()+plot_theme+
   scale_fill_manual(values=c("Immature"="maroon4", 'Other'='gray50'))
-write.csv(to_plot_fraction[to_plot_fraction$Sample=='Old', ], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3G.csv')
 wilcox.test(to_plot_fraction$Fraction[to_plot_fraction$Bias=='Immature'&to_plot_fraction$Replicate=='Replicate1'&to_plot_fraction$Sample=='Old'], to_plot_fraction$Fraction[to_plot_fraction$Bias!='Immature'&to_plot_fraction$Replicate=='Replicate1'&to_plot_fraction$Sample=='Old'])
 wilcox.test(to_plot_fraction$Fraction[to_plot_fraction$Bias=='Immature'&to_plot_fraction$Replicate=='Replicate2'&to_plot_fraction$Sample=='Old'], to_plot_fraction$Fraction[to_plot_fraction$Bias!='Immature'&to_plot_fraction$Replicate=='Replicate2'&to_plot_fraction$Sample=='Old'])
 ```
@@ -564,7 +558,6 @@ to_plot <- data.frame(epi_young_seurat[["umap"]]@cell.embeddings, Clone=epi_youn
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_young_mpp4 <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3F1.csv')
 
 # Balanced high output young
 sel_clone <- '0'
@@ -572,7 +565,6 @@ to_plot <- data.frame(epi_young_seurat[["umap"]]@cell.embeddings, Clone=epi_youn
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_young_balanced <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3F2.csv')
 
 #Low output clone old
 sel_clone <- '3'
@@ -580,7 +572,6 @@ to_plot <- data.frame(epi_old_seurat[["umap"]]@cell.embeddings, Clone=epi_old_se
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_old_low_output <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3F3.csv')
 
 #Low output clone old
 sel_clone <- '0'
@@ -588,15 +579,12 @@ to_plot <- data.frame(epi_old_seurat[["umap"]]@cell.embeddings, Clone=epi_old_se
 to_plot$Clone[to_plot$Clone!=sel_clone] <- NA
 to_plot <- to_plot[order(to_plot$Clone, na.last = FALSE), ]
 plot_old_high_output <- ggplot(to_plot, aes(x=UMAP_1 , y=UMAP_2, color=Clone))+geom_point(size=.25)+NoAxes()+NoLegend()+plot_theme+scale_color_manual(values=c('firebrick'), na.value = 'gray75')+theme(panel.background = element_blank())
-write.csv(to_plot, '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3F4.csv')
 
 grid.arrange(plot_old_low_output, plot_old_high_output, plot_young_balanced, plot_young_mpp4, nrow=1)
 ```
 ```{r write_matrices_for_python}
 epi_old_seurat$Clones <- paste0('Clone', epi_old_seurat$seurat_clusters)
 epi_old_seurat$Clones[epi_old_seurat$Clones=='CloneNA'] <- paste0('Clone10', 1:sum(epi_old_seurat$Clones=='CloneNA'))
-write.csv(epi_old_seurat[[]][epi_old_seurat$Clones!='ClonesNA',], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3E1.csv')
 epi_young_seurat$Clones <- paste0('Clone', epi_young_seurat$seurat_clusters)
 epi_young_seurat$Clones[epi_young_seurat$Clones=='CloneNA'] <- paste0('Clone10', 1:sum(epi_young_seurat$Clones=='CloneNA'))
-write.csv(epi_young_seurat[[]][epi_young_seurat$Clones!='ClonesNA',], '/home/mscherer/cluster/project/Methylome/analysis/HSCs/paper/revision/figures/Figure3/source_data/Fig3E2.csv')
 ```
