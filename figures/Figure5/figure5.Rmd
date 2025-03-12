@@ -1,0 +1,705 @@
+---
+title: "EPI-Clone Figure 5"
+output: html_document
+date: "2025-03-06"
+---
+
+This RMarkdown document generates Figure 5. The analysis encompasses the visualization of clonal lineage biases in the TBM and the CD34+ compartment, transcription differences between clones within the HSC/MPP compartment and, the direct comparison between EPI-clone and mitochondrial lineage tracing.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(reshape2)
+library(tidyverse)
+library(plyr)
+library(lmerTest)
+source("../../scripts/EPIClone.R")
+use_cpgs <- scan("../Figure4/static_CpGs_human.csv", what = character())
+
+ctcolors <- c(
+  "Immature B" = "#4FAEEB",
+  "B-cells" = "#A1D2FB",
+  "NK-cells" = "darkred",
+  "Eo/Baso" = "#AC3A3A",
+  "CD34+" = "maroon4",
+  "Erythroid" = "#ED7950",
+  "Monocytes" = "#508C46",
+  "pDC" = "lightgreen",
+  "CD4 T-cells" = "#AF6CC3",
+  "CD8 T-cells" = "#832DA4", "mixed" = "black"
+)
+
+mutcolors <- c(
+  "N/A" = "grey30",
+  "wt" = "grey70",
+  "ASXL1 Q592X" = "firebrick",
+  "LoY" = "blue",
+  "DNMT3A R659H" = "coral3",
+  "PPM1D R552X" = "firebrick3",
+  "PPM1D W427Gfs" = "deeppink",
+  "DNMT3A I780T" = "firebrick4",
+  "DNMT3A Q606X" = "deeppink3",
+  "DNMT3A I310T" = "coral1",
+  "DNMT3A W440X" = "deeppink4",
+  "DNMT3A C666Y" = "orange2",
+  "DNMT3A R729L" = "tomato2"
+)
+
+# Helper function to determine p-values of lineage biases
+run_model <- function(data, celltype, predictor, coef_name, comparison, compartment, weight_var) {
+  data[[paste0(celltype, "_percent")]] <- data[[celltype]] * 100
+
+  data_filtered <- data
+  data_filtered[[paste0(celltype, "_proportion")]] <- pmin(pmax(data_filtered[[celltype]], 0.0001), 0.9999)
+  data_filtered[[paste0(celltype, "_logit")]] <- qlogis(data_filtered[[paste0(celltype, "_proportion")]])
+
+  formula_str <- paste0(celltype, "_logit ~ ", predictor, " + (1 | patient)")
+  model <- lmerTest::lmer(as.formula(formula_str), data = data_filtered, weights = weight_var)
+
+  model_results <- summary(model)$coefficients
+  if (coef_name %in% rownames(model_results)) {
+    p_value <- model_results[coef_name, "Pr(>|t|)"]
+    estimate <- model_results[coef_name, "Estimate"]
+    effect <- ifelse(estimate < 0, -1, 1)
+  } else {
+    p_value <- NA
+    effect <- NA
+  }
+
+  data.frame(
+    Compartment = compartment,
+    CellType = celltype,
+    pvalue = round(p_value, 3),
+    Comparison = comparison,
+    effect = effect,
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+
+
+## Lineage biases expanded vs non expanded clones TBM (Fig 5A, EV8F)
+Visualizing the log2 fold changes of cell type proportions in expanded clones compared to non-expanded clones elucidates lineage-specific biases associated with clonal expansions.
+
+```{r read data tbm, message=FALSE, error=FALSE, warning=FALSE}
+S_tbm <- readRDS(url("https://figshare.com/ndownloader/files/51354143"))
+
+patient.age_tbm <- S_tbm@meta.data %>%
+  distinct(sample, age) %>%
+  arrange(age)
+patients <- patient.age_tbm$sample
+
+#EpiClone must be executed to identify clones in each donor. 
+#However, to optimize computational efficiency, we are utilizing the clonal information already stored in the Seurat metadata. 
+#For a detailed guide on running EpiClone and generating this object, please refer to the script provided for Figure 4.
+epiclones_tbm <- SplitObject(S_tbm, split.by = "sample")
+epiclones_tbm <- epiclones_tbm[patients]
+names(epiclones_tbm) <- patients
+
+epiclones_tbm <- lapply(epiclones_tbm, function(x) {
+  new_epi <- ifelse(
+    grepl("non_expanded", x@meta.data$EPIclone_id),
+    1,
+    as.numeric(sub(".*_(\\d+)", "\\1", x@meta.data$EPIclone_id))
+  )
+
+  x <- AddMetaData(x, metadata = new_epi, col.name = "EPIclone_id")
+})
+```
+
+```{r data_processing tbm}
+epiclone_vs_celltype <- lapply(patients, function(n) {
+  epiclones_tbm[[n]]$simplecelltype <- epiclones_tbm[[n]]$celltype
+  out <- table(epiclones_tbm[[n]]$EPIclone_id, epiclones_tbm[[n]]$celltype)
+  out <- out[, colnames(out) != "Unclear", drop = FALSE]
+  out <- out[, colnames(out) != "pDC", drop = FALSE]
+  rownames(out) <- paste(n, rownames(out), sep = "_")
+  out
+})
+
+forplot <- bind_rows(lapply(epiclones_tbm, function(x) {
+  na.omit(data.frame(
+    mut = x$mutation,
+    CHOIR = x$EPIclone_id,
+    celltype = x$celltype,
+    patient = unique(x$sample)
+  ))
+}))
+
+patient_totals <- forplot %>%
+  group_by(patient) %>%
+  dplyr::summarise(total_patient_size = n(), .groups = "drop")
+
+forplot <- forplot %>%
+  mutate(mut = if_else(mut == "N/A", NA_character_, mut)) %>%
+  group_by(patient, CHOIR) %>%
+  dplyr::summarise(
+    size = n(),
+    perc.wt = mean(mut == "wt", na.rm = TRUE),
+    dominant = names(which.max(table(mut))),
+    .groups = "drop"
+  ) %>%
+  left_join(patient_totals, by = "patient") %>%
+  mutate(perc = size / total_patient_size)
+
+forplot$key <- with(forplot, paste(patient, CHOIR, sep = "_"))
+cluster2dominant <- forplot$dominant
+names(cluster2dominant) <- forplot$key
+cluster2size <- forplot$size
+names(cluster2size) <- forplot$key
+cluster2perc <- forplot$perc
+names(cluster2perc) <- forplot$key
+
+epiclone_vs_celltype <- do.call(rbind, epiclone_vs_celltype)
+epiclone_vs_celltype <- epiclone_vs_celltype / rowSums(epiclone_vs_celltype)
+epiclone_vs_celltype_anno <- data.frame(
+  row.names = rownames(epiclone_vs_celltype),
+  patient = gsub("_.+", "", rownames(epiclone_vs_celltype)),
+  dominant = cluster2dominant[rownames(epiclone_vs_celltype)],
+  size = cluster2size[rownames(epiclone_vs_celltype)],
+  perc = cluster2perc[rownames(epiclone_vs_celltype)]
+)
+
+plf <- data.frame(epiclone_vs_celltype_anno, epiclone_vs_celltype, clone = gsub(".+_", "", rownames(epiclone_vs_celltype_anno)))
+plf$dominant_plot <- factor(ifelse(plf$clone == "1", "non-expanded", ifelse(plf$dominant == "wt", "other expanded", plf$dominant)),
+  levels = c(names(mutcolors), "other expanded", "non-expanded")
+)
+plf <- plf[order(plf$dominant_plot, decreasing = T), ]
+plf$patient <- factor(plf$patient, levels = patients)
+plf$expansion <- factor(ifelse(plf$clone == "1", "non-expanded", "expanded"), levels = c("non-expanded", "expanded"))
+plf$is.mutation <- factor(ifelse(plf$dominant == "wt", FALSE, TRUE))
+```
+
+```{r fold_change_calc tbm}
+celltypes <- c("CD34.", "Erythroid", "Immature.B", "Monocyte", "NK.cells")
+
+non_expanded_means <- plf %>%
+  filter(expansion == "non-expanded") %>%
+  group_by(patient) %>%
+  dplyr::summarise(across(all_of(celltypes), ~ unique(.x), .names = "non_expanded_{col}"))
+
+clone_fold_changes <- plf %>%
+  dplyr::left_join(non_expanded_means, by = "patient") %>%
+  dplyr::mutate(across(all_of(celltypes),
+    ~ .x / get(paste0("non_expanded_", cur_column())),
+    .names = "fold_change_{col}"
+  )) %>%
+  dplyr::mutate(across(starts_with("fold_change_"),
+    ~ log2(.x),
+    .names = "log_{col}"
+  )) %>%
+  filter(clone != 1)
+
+log_fold_columns <- names(clone_fold_changes)[starts_with("log_fold_change_", vars = names(clone_fold_changes))]
+
+for (col in log_fold_columns) {
+  clone_fold_changes[[col]][is.infinite(clone_fold_changes[[col]])] <-
+    min(clone_fold_changes[[col]][is.finite(clone_fold_changes[[col]])], na.rm = TRUE) - 1
+}
+```
+
+```{r lineages_plot tbm, fig.width = 15}
+clone_fold_changes_long <- clone_fold_changes %>%
+  pivot_longer(
+    cols = starts_with("log_fold_change_"),
+    names_to = "celltype",
+    values_to = "log_fold_change",
+    names_prefix = "log_fold_change_"
+  )
+
+custom_y_labels <- c(
+  "logFC CD34+ vs.\nnon-expanded clones",
+  "logFC Erythroid vs.\nnon-expanded clones",
+  "logFC Immature B vs.\nnon-expanded clones",
+  "logFC Monocyte vs.\nnon-expanded clones",
+  "logFC NK cells vs.\nnon-expanded clones"
+)
+names(custom_y_labels) <- celltypes
+
+clone_fold_changes_long <- clone_fold_changes_long %>%
+  mutate(y_label = custom_y_labels[celltype])
+
+p <- ggplot(
+  clone_fold_changes_long,
+  aes(x = patient, y = log_fold_change, size = size, color = dominant)
+) +
+  geom_point() +
+  facet_wrap(~celltype, scales = "free_y", nrow = 1, strip.position = "left", labeller = as_labeller(custom_y_labels)) +
+  scale_y_continuous(
+    oob = scales::squish,
+    breaks = scales::breaks_extended(),
+    labels = function(x) {
+      x <- as.character(x)
+      x[which.min(as.numeric(x))] <- paste0("<", x[which.min(as.numeric(x))])
+      x
+    }
+  ) +
+  scale_size_continuous(
+    breaks = c(500, 1000, 1500),
+    labels = c("500", "1000", "1500"),
+    range = c(2, 8),
+    name = "Cells"
+  ) +
+  scale_color_manual(
+    name = "CHIP Clone",
+    values = mutcolors,
+    guide = "none"
+  ) +
+  xlab("") +
+  ylab("") +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.spacing.x = unit(0.02, "cm"),
+    plot.margin = margin(t = 10, r = 50, b = 10, l = 10),
+    aspect.ratio = 14 / 15,
+    strip.background = element_blank(),
+    strip.placement = "outside"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+print(p)
+plf_tbm <- plf
+```
+
+## Lineage biases expanded vs non expanded clones CD34 (EV8G)
+To understand how specific mutations influence hematopoietic differentiation, we compared the distribution of different cell types within expanded (mutant) and non-expanded (wild-type) clones. This analysis reveals lineage-specific biases associated with clonal expansions.
+
+```{r read data cd34, message=FALSE, error=FALSE, warning=FALSE}
+S_cd34 <- readRDS(url("https://figshare.com/ndownloader/files/51354197"))
+
+# we are only looking at patient data if there are more than 1000 cells
+patient.age <- S_cd34@meta.data %>%
+  distinct(sample, age) %>%
+  filter(sample %in% names(table(S_cd34$sample)[table(S_cd34$sample) > 1000])) %>%
+  arrange(age)
+
+patients <- patient.age %>% pull(sample)
+
+# EpiClone must be executed to identify clones in each donor. 
+# However, to optimize computational efficiency, we are utilizing the clonal information already stored in the Seurat metadata. 
+# For a detailed guide on running EpiClone and generating this object, please refer to the script provided for Figure 4.
+epiclones_cd34 <- SplitObject(S_cd34, split.by = "sample")
+epiclones_cd34 <- epiclones_cd34[patients]
+names(epiclones_cd34) <- patients
+
+epiclones_cd34 <- lapply(epiclones_cd34, function(x) {
+  new_epi <- ifelse(
+    grepl("non_expanded", x@meta.data$EPIclone_id),
+    1,
+    as.numeric(sub(".*_(\\d+)", "\\1", x@meta.data$EPIclone_id))
+  )
+
+  x <- AddMetaData(x, metadata = new_epi, col.name = "EPIclone_id")
+})
+```
+
+```{r add X.1}
+# The following Seurat object contains scTAMARA-seq data from donor X.1. 
+# It has been integrated with the other EpiClone Seurat objects for joint analysis.
+SDR <- readRDS(url("https://figshare.com/ndownloader/files/52946162"))
+
+# EpiClone must be executed to identify clones in each donor. 
+# However, to optimize computational efficiency, we are utilizing the clonal information already stored in the Seurat metadata. 
+epiclones_SDR <- subset(SDR, cells = names(na.omit(SDR$EPIclone_id)))
+epiclones_SDR$celltype <- epiclones_SDR$projected.cluster
+epiclones_cd34 <- append(epiclones_cd34, epiclones_SDR, after = 3)
+names(epiclones_cd34)[[4]] <- "X.1"
+patients <- names(epiclones_cd34)
+```
+
+```{r data_processing cd34}
+forplot <- bind_rows(lapply(epiclones_cd34, function(x) {
+  x <- subset(x, cells = names(na.omit(x$EPIclone_id)))
+  na.omit(data.frame(
+    mut = x$mutation,
+    CHOIR = as.character(x$EPIclone_id),
+    celltype = x$celltype,
+    patient = unique(x$sample)
+  ))
+}))
+
+patient_totals <- forplot %>%
+  group_by(patient) %>%
+  dplyr::summarise(total_patient_size = n(), .groups = "drop")
+
+forplot <- forplot %>%
+  mutate(mut = if_else(mut == "N/A", NA_character_, mut)) %>%
+  group_by(patient, CHOIR) %>%
+  dplyr::summarise(
+    size = n(),
+    perc.wt = mean(mut == "wt", na.rm = TRUE),
+    dominant = if (any(!is.na(mut))) names(which.max(table(mut))) else "wt",
+    .groups = "drop"
+  ) %>%
+  left_join(patient_totals, by = "patient") %>%
+  mutate(perc = size / total_patient_size)
+
+forplot$key <- with(forplot, paste(patient, CHOIR, sep = "_"))
+cluster2dominant <- forplot$dominant
+names(cluster2dominant) <- forplot$key
+cluster2size <- forplot$size
+names(cluster2size) <- forplot$key
+cluster2perc <- forplot$perc
+names(cluster2perc) <- forplot$key
+
+epiclone_vs_celltype <- lapply(patients, function(n) {
+  epiclones_cd34[[n]]$simplecelltype <- epiclones_cd34[[n]]$celltype
+  out <- table(epiclones_cd34[[n]]$EPIclone_id, epiclones_cd34[[n]]$celltype)
+  rownames(out) <- paste(n, rownames(out), sep = "_")
+  out
+})
+
+epiclone_vs_celltype <- do.call(rbind, epiclone_vs_celltype)
+epiclone_vs_celltype <- epiclone_vs_celltype / rowSums(epiclone_vs_celltype)
+epiclone_vs_celltype_anno <- data.frame(
+  row.names = rownames(epiclone_vs_celltype),
+  patient = gsub("_.+", "", rownames(epiclone_vs_celltype)),
+  dominant = cluster2dominant[rownames(epiclone_vs_celltype)],
+  size = cluster2size[rownames(epiclone_vs_celltype)],
+  perc = cluster2perc[rownames(epiclone_vs_celltype)]
+)
+
+plf <- data.frame(epiclone_vs_celltype_anno, epiclone_vs_celltype, clone = gsub(".+_", "", rownames(epiclone_vs_celltype_anno)))
+plf$dominant_plot <- factor(ifelse(plf$clone == "1", "non-expanded", ifelse(plf$dominant == "wt", "other expanded", plf$dominant)),
+  levels = c(names(mutcolors), "other expanded", "non-expanded")
+)
+plf <- plf[order(plf$dominant_plot, decreasing = T), ]
+plf$patient <- factor(plf$patient, levels = patients)
+plf$expansion <- factor(ifelse(plf$clone == "1", "non-expanded", "expanded"), levels = c("non-expanded", "expanded"))
+plf$is.mutation <- factor(ifelse(plf$dominant == "wt", FALSE, TRUE))
+```
+
+```{r fold_change_calc cd34}
+celltypes <- unique(S_cd34$celltype)
+
+non_expanded_means <- plf %>%
+  filter(expansion == "non-expanded") %>%
+  group_by(patient) %>%
+  dplyr::summarise(across(all_of(celltypes), ~ unique(.x), .names = "non_expanded_{col}"))
+
+clone_fold_changes <- plf %>%
+  dplyr::left_join(non_expanded_means, by = "patient") %>%
+  dplyr::mutate(across(all_of(celltypes),
+    ~ .x / get(paste0("non_expanded_", cur_column())),
+    .names = "fold_change_{col}"
+  )) %>%
+  dplyr::mutate(across(starts_with("fold_change_"),
+    ~ log2(.x),
+    .names = "log_{col}"
+  )) %>%
+  filter(clone != 1)
+
+log_fold_columns <- names(clone_fold_changes)[starts_with("log_fold_change_", vars = names(clone_fold_changes))]
+
+for (col in log_fold_columns) {
+  clone_fold_changes[[col]][is.infinite(clone_fold_changes[[col]])] <-
+    min(clone_fold_changes[[col]][is.finite(clone_fold_changes[[col]])], na.rm = TRUE) - 1
+}
+```
+
+```{r lineages_plot cd34, fig.width = 15}
+clone_fold_changes_long <- clone_fold_changes %>%
+  pivot_longer(
+    cols = starts_with("log_fold_change_"),
+    names_to = "celltype",
+    values_to = "log_fold_change",
+    names_prefix = "log_fold_change_"
+  )
+
+custom_y_labels <- c(
+  "logFC EMPP/MEP vs.\nnon-expanded clones",
+  "logFC GMP vs.\nnon-expanded clones",
+  "logFC HSC/MPP B vs.\nnon-expanded clones",
+  "logFC MkP vs.\nnon-expanded clones"
+)
+
+names(custom_y_labels) <- celltypes
+
+clone_fold_changes_long <- clone_fold_changes_long %>%
+  mutate(y_label = custom_y_labels[celltype])
+
+p <- ggplot(
+  clone_fold_changes_long,
+  aes(x = patient, y = log_fold_change, size = size, color = dominant)
+) +
+  geom_point() +
+  facet_wrap(~celltype, scales = "free_y", nrow = 1, strip.position = "left", labeller = as_labeller(custom_y_labels)) +
+  scale_y_continuous(
+    oob = scales::squish,
+    breaks = scales::breaks_extended(),
+    labels = function(x) {
+      x <- as.character(x)
+      x[which.min(as.numeric(x))] <- paste0("<", x[which.min(as.numeric(x))])
+      x
+    }
+  ) +
+  scale_size_continuous(
+    breaks = c(500, 1000, 1500),
+    labels = c("500", "1000", "1500"),
+    range = c(2, 8),
+    name = "Cells"
+  ) +
+  scale_color_manual(
+    name = "CHIP Clone",
+    values = mutcolors,
+    guide = "none"
+  ) +
+  xlab("") +
+  ylab("") +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.spacing.x = unit(0.02, "cm"),
+    plot.margin = margin(t = 10, r = 50, b = 10, l = 10),
+    aspect.ratio = 14 / 15,
+    strip.background = element_blank(),
+    strip.placement = "outside"
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+print(p)
+plf_cd34 <- plf
+```
+
+## Overview lineage biases TBM and CD34+ (5B)
+In this section, we present an overview of the lineage biases observed in the TMB and CD34+ compartments. Our analysis compares expanded versus non-expanded clones, as well as clones with and without clonal hematopoiesis mutations, providing insights into the underlying clonal dynamics.
+
+```{r calculate pvalues}
+celltypes_tbm <- c("CD34.", "Erythroid", "Immature.B", "Monocyte", "NK.cells")
+celltypes_cd34 <- unique(S_cd34$celltype)
+
+predictors <- list(
+  list(name = "expansion", coef = "expansionexpanded", comparison = "expanded vs. non-expanded"),
+  list(name = "is.mutation", coef = "is.mutationTRUE", comparison = "CH vs. non-CH")
+)
+
+datasets <- list(
+  tbm = list(data = plf_tbm, celltypes = celltypes_tbm),
+  cd34 = list(data = plf_cd34, celltypes = celltypes_cd34)
+)
+
+
+results_df <- data.frame(
+  Compartment = character(),
+  CellType = character(),
+  pvalue = numeric(),
+  Comparison = character(),
+  effect = integer(),
+  stringsAsFactors = FALSE
+)
+
+for (compartment in names(datasets)) {
+  ds <- datasets[[compartment]]
+  data <- ds$data
+  celltypes <- ds$celltypes
+  weights_var <- data$size
+
+  for (pred in predictors) {
+    for (celltype in celltypes) {
+      res <- run_model(
+        data = data,
+        celltype = celltype,
+        predictor = pred$name,
+        coef_name = pred$coef,
+        comparison = pred$comparison,
+        compartment = compartment,
+        weight_var = weights_var
+      )
+      results_df <- rbind(results_df, res)
+    }
+  }
+}
+```
+
+```{r pvalues plot, fig.height=2.5, fig.width=6}
+results_df$squished <- with(results_df, ifelse(-log10(pvalue) > 3, 3, -log10(pvalue)))
+results_df$Compartment <- factor(results_df$Compartment, levels = c("tbm", "cd34"))
+results_df$CellType[results_df$CellType == "CD34."] <- "CD34+"
+results_df$CellType[results_df$CellType == "Immature.B"] <- "Immature B"
+results_df$CellType[results_df$CellType == "NK.cells"] <- "NK cells"
+results_df$CellType[results_df$CellType == "EMPP.MEP"] <- "EMPP/MEP"
+results_df$CellType[results_df$CellType == "HSC.MPP"] <- "HSC/MPP"
+ggplot(aes(x = CellType, y = Comparison, color = as.character(effect), size = squished), data = results_df) +
+  geom_blank() +
+  facet_grid(~Compartment,
+    labeller = as_labeller(c("tbm" = "TBM", "cd34" = "CD34+")),
+    space = "free_x",
+    scales = "free_x"
+  ) +
+  geom_point(data = subset(results_df, pvalue <= 0.1)) +
+  scale_color_manual(name = "effect", values = c("1" = "#AA0000", "-1" = "#0000AA", "0" = "white"), labels = c("1" = "enriched", "-1" = "depleted")) +
+  scale_size_continuous(name = "p value", range = c(0.1, 4), breaks = c(1, 2, 3), labels = c("0.1", "0.01", "<0.001")) +
+  scale_alpha_continuous(name = "-log10 p", breaks = c(1, 2, 3), labels = c("0.1", "0.01", "<0.001")) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Transcriptional differences between clones within the HSC/MPP compartment (5D)
+To resolve transcriptional differences between clones within the HSC/MPP compartment, we integrated targeted RNA-seq into the scTAM-seq protocol (scTAMARA-seq) by combining SDR-seq for Mission Bio Tapestri with scTAMseq. We profiled a CD34+ bone marrow sample from donor X.1, confirming the DNA methylation-based cell state annotations. This integrated approach allowed us to investigate the gene expression patterns of distinct clones, demonstrating that EPI-Clone is compatible with targeted RNA-seq from the same cell.
+
+```{r, message=FALSE, error=FALSE, warning=FALSE}
+Idents(epiclones_SDR) <- epiclones_SDR$EPIclone_id
+epiclones_SDR$EPIclone_id[epiclones_SDR$EPIclone_id == "1"] <- NA
+
+pct.hsc <- sapply(as.character(2:8), function(clone) {
+  mean(epiclones_SDR$projected.cluster[Idents(epiclones_SDR) == clone] == "HSC.MPP")
+})
+
+fortest <- subset(epiclones_SDR, projected.cluster == "HSC.MPP")
+
+RNA.counts <- GetAssayData(fortest, assay = "RNA", slot = "counts")
+rna.ids <- Idents(fortest)[colnames(RNA.counts)]
+
+forplot <- data.frame(
+  cluster = as.character(1:8),
+  pct.hsc = sapply(as.character(1:8), function(clone) {
+    mean(epiclones_SDR$projected.cluster[Idents(epiclones_SDR) == clone] == "HSC.MPP")
+  }),
+  is.expanded = as.character(1:8) != "1", # assume clone "1" is non-expanded
+  t(sapply(as.character(1:8), function(clone) {
+    apply(RNA.counts[, rna.ids == clone, drop = FALSE], 1, function(x) mean(x > 0))
+  }))
+)
+
+forplot <- melt(forplot, id.vars = c("cluster", "is.expanded", "pct.hsc"))
+
+qplot(
+  x = 100 * pct.hsc, y = 100 * value,
+  data = subset(forplot, is.expanded & variable %in% c("CDC45", "TAL1", "SLC40A1", "CEBPA"))
+) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  facet_wrap(~ factor(variable, levels = c("TAL1", "CDC45", "SLC40A1", "CEBPA")), scales = "free_y") +
+  xlab("% of clone HSC/MPP") +
+  ylab("% of HSC/MPPs expressing")
+```
+
+## Comparison to Mitochondrial linneage tracing (5F,G)
+There is ongoing debate over the use of low-heteroplasmy mtDNA variants for lineage tracing. To address this, we analyzed peripheral blood from a 38-year-old donor (X.2) previously profiled by mt-scATAC-seq, and we integrated a mitochondrial targeting panel into scTAM-seq to generate detailed mtDNA profiles alongside EPI-Clone data. This approach enables a direct comparison of phylogenetic relationships between mtDNA variants and EPI-Clones, providing an independent validation of the EPI-Clone method.
+
+```{r prepare data, message=FALSE, error=FALSE, warning=FALSE}
+load(url("https://figshare.com/ndownloader/files/51355100"))
+mito_variants <- read_csv("../Figure5/mito_variants.csv")
+
+mt.ratios <- all_cells@meta.data[, grepl("ratio", colnames(all_cells@meta.data))]
+mt.counts <- all_cells@meta.data[, grepl("totalcounts", colnames(all_cells@meta.data))]
+
+use <- mito_variants$position[mito_variants$of_interest == TRUE]
+position <- as.integer(gsub("\\D", "", colnames(mt.counts)))
+mt.ratios <- mt.ratios[, paste0("chrM:", use, ".ratio")]
+mt.counts <- mt.counts[, paste0("chrM:", use, ".totalcounts")]
+labels <- mito_variants$label
+names(labels) <- mito_variants$position
+
+plf <- melt(
+  data.frame(
+    CHOIR = all_cells$CHOIR_clusters_0.05,
+    ct = all_cells$celltype,
+    mt.ratios
+  ),
+  id.vars = c("CHOIR", "ct")
+)
+plf$ct <- as.factor(plf$ct)
+plf$position <- as.integer(gsub("\\D", "", plf$variable))
+plf$label <- unname(labels[as.character(plf$position)])
+
+rate <- ddply(subset(plf, position %in% use),
+  c("variable", "position"),
+  summarise,
+  r = mean(value > 0.05, na.rm = TRUE)
+)
+v2r <- rate$r
+names(v2r) <- rate$variable
+
+# Summarize mutation percentage and other statistics by CHOIR cluster and variant
+perc.by.cluster <- ddply(subset(plf, position %in% use),
+  c("CHOIR", "variable", "position", "label"),
+  summarise,
+  perc.mut = mean(value > 0.05, na.rm = TRUE),
+  dominant.ct = levels(ct)[which.max(table(ct))],
+  perc.dominant = mean(ct == dominant.ct),
+  n = sum(!is.na(value)),
+  p = pbinom(sum(value > 0.05, na.rm = TRUE),
+    prob = v2r[unique(as.character(variable))],
+    size = n
+  ),
+  p.twosided = min(c(p * 2, (1 - p) * 2)),
+  class = ifelse(perc.mut > 0.05, "mutant", "wildtype")
+)
+```
+
+```{r selected_variants, fig.width=10}
+ggplot(
+  aes(
+    x = CHOIR,
+    y = 100 * perc.mut,
+    size = n,
+    color = ifelse(perc.dominant > 0.8, dominant.ct, "mixed"),
+    shape = p.adjust(p.twosided, method = "fdr") < 0.1
+  ),
+  data = subset(perc.by.cluster, CHOIR != "1" & position != 7077)
+) +
+  geom_point() +
+  scale_color_manual(values = ctcolors, name = "Dominant cell type") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank(),
+    axis.text.x = element_blank()
+  ) +
+  geom_hline(aes(yintercept = r),
+    linetype = 3,
+    data = subset(rate, position != 7077)
+  ) +
+  scale_size_area(name = "# cells", breaks = c(20, 75, 150)) +
+  xlab("EPI-Clone") +
+  ylab("% of cells carrying variant") +
+  facet_wrap(~label, scales = "free_y", nrow = 2) +
+  scale_shape_manual(
+    values = c("TRUE" = 19, "FALSE" = 1),
+    name = "Enrichment",
+    labels = c("TRUE" = "p < 0.05", "FALSE" = "n.s."),
+    breaks = c("TRUE", "FALSE")
+  )
+```
+
+```{r 7076_variant, fig.width=4, fig.height=4}
+ggplot(
+  aes(
+    x = CHOIR,
+    y = 100 * perc.mut,
+    size = n,
+    color = ifelse(perc.dominant > 0.8, dominant.ct, "mixed"),
+    shape = p.adjust(p.twosided, method = "fdr") < 0.1
+  ),
+  data = subset(perc.by.cluster, CHOIR != "1" & position == 7077)
+) +
+  geom_point() +
+  scale_color_manual(values = ctcolors, name = "Dominant cell type") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank(),
+    axis.text.x = element_blank()
+  ) +
+  geom_hline(aes(yintercept = r),
+    linetype = 3,
+    data = subset(rate, position == 7077)
+  ) +
+  scale_size_area(name = "# cells", breaks = c(20, 75, 150)) +
+  xlab("EPI-Clone") +
+  ylab("% of cells carrying variant") +
+  facet_wrap(~label, scales = "free_y", nrow = 2) +
+  scale_shape_manual(
+    values = c("TRUE" = 19, "FALSE" = 1),
+    name = "Enrichment",
+    labels = c("TRUE" = "p < 0.05", "FALSE" = "n.s."),
+    breaks = c("TRUE", "FALSE")
+  )
+```
