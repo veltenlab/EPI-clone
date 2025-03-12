@@ -1,0 +1,61 @@
+---
+title: "Identify consensus static CpGs"
+output: html_document
+date: "2024-12-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(spatstat.explore)
+library(Seurat)
+source("../../scripts/EPIClone.R")
+```
+
+```{r}
+# Load the integrated Seurat object containing bone marrow single-cell data from figshare
+S <- readRDS("/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/tbm_seurat.rds")
+
+patients <- unique(S$sample)
+```
+
+```{r}
+epiclones <- mclapply(
+  patients,
+  function(patient) {
+    seurat_subset <- subset(S, sample == patient)
+    seurat_subset <- subset(seurat_subset, celltype %in% c("Monocyte", "Erythroid", "CD34+",  "NK cells"))
+    
+    out <- epiclone(
+      seurat_subset,
+      trueClone = NULL,
+      batch = "sample",
+      celltype = "celltype",
+      performance.field = "NonHhaI",
+      lower.thr.methrate = 0.05,
+      upper.thr.methrate = 0.95,
+      k.bigCloneSelection = 25,          
+      returnIntermediateSeurat = TRUE,
+      npcs.bigCloneSelection = 50,
+      selected.CpGs = NULL,
+      res.Clustering = 0.8
+    )
+    
+    
+    return(out)
+  },
+  mc.cores = 7  
+)
+
+saveRDS(epiclones, file = "/home/martina/cluster/project/Methylome/human_HSCs/Analysis/Human/Integration/objects_figshare/staticcpg_epiclones.Rds")
+```
+
+```{r}
+static_cpgs <- table(unlist(lapply(epiclones, function(x) x[[3]]$selectedCpGs)))
+use_cpgs <- names(static_cpgs)[static_cpgs >= 5]
+
+use_cpgs_actual <- scan("../../infos/static_CpGs_human.csv", what = character())
+
+use_cpgs_actual %in% use_cpgs
+```
+
