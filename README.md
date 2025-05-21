@@ -3,7 +3,7 @@
 
 ## Introduction
 
-This repository comprises code to reproduce the analysis of the [EPI-clone paper]([https://www.biorxiv.org/content/10.1101/2024.04.01.587514v1](https://doi.org/10.1038/s41586-025-09041-8). It uses the Seurat object from [figshare](https://doi.org/10.6084/m9.figshare.24204750.v1) to generate the plots from the paper. We refer to the [figures](figures) folder for an explanation on the datasets and the corresponding code. Additionally, utility functions are available in the [scripts](scripts) folder. The EPI-clone function within the [scripts](scripts) folder comprises a functionality to identify clones from scDNAm data in the form of a Seurat object.
+This repository comprises code to reproduce the analysis of the [EPI-clone paper](https://doi.org/10.1038/s41586-025-09041-8). It uses the Seurat object from [figshare](https://doi.org/10.6084/m9.figshare.24204750.v1) to generate the plots from the paper. We refer to the [figures](figures) folder for an explanation on the datasets and the corresponding code. Additionally, utility functions are available in the [scripts](scripts) folder. The EPI-clone function within the [scripts](scripts) folder comprises a functionality to identify clones from scDNAm data in the form of a Seurat object.
 
 ## Installation
 
